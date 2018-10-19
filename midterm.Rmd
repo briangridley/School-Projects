@@ -1,0 +1,268 @@
+---
+title: "BDfC - Midterm - Brian Gridley"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+Looking into bedbug cases in the 311 data. Hypothesize that there are more cases in Allston/Brighton because of the large population of renters (and the fact that a lot of people find used furniture on the street when they move into an apartment... Allston christmas). I hypothesize that cases spike at around August/September each year when the majority of apartments turnover in the area. 
+
+
+IMPORTING
+```{r}
+library(tidyverse)
+
+call_center_data <- read_csv("C:/Users/gridl/Documents/NEU/Classes/Big_Data/Data/311.csv")
+
+head(call_center_data)
+```
+DATA CLEANUP
+```{r}
+#turn all column names to lower case
+names(call_center_data) <- tolower(names(call_center_data))
+
+#looking at how many bed bug cases there are and how it's labeled
+call_center_data %>%
+  group_by(type) %>%
+  count()
+#2461 "Bed Bugs" cases since 2011. We'll see if there's any pattern
+
+#looking into the neighborhood labels
+call_center_data %>%
+  group_by(neighborhood) %>%
+  count()
+#need to clean it up a bit... 
+
+call_center_data_updated <- call_center_data
+
+# want to bring "Allston" and "Brighton" instances into "Allston / Brighton" neighborhood category
+call_center_data_updated$neighborhood[call_center_data_updated$neighborhood == "Allston"] <- "Allston / Brighton"
+
+call_center_data_updated$neighborhood[call_center_data_updated$neighborhood == "Brighton"] <- "Allston / Brighton"
+
+#clean up the "South Boston" / "South Boston / South Boston Waterfront" categorization while we're at it
+call_center_data_updated$neighborhood[call_center_data_updated$neighborhood == "South Boston"] <- "South Boston / South Boston Waterfront"
+
+#look at the neighborhoods again to make sure it worked
+call_center_data_updated %>%
+  group_by(neighborhood) %>%
+  count()
+#looks good!
+
+
+
+#now bring all bed bug cases into separate table and add column to ID month of case open date to analyze the timing
+bedbug_cases <- call_center_data_updated %>%
+  filter(type == "Bed Bugs") %>%
+  mutate(year_month = substr(open_dt,1,7))
+
+head(bedbug_cases)
+```
+
+SUMMARY TABLES AND CHARTS
+```{r}
+#double checking how far back the data goes
+#arrange(call_center_data, open_dt)
+
+# create a summary table of bed bug case count by neighborhood
+bedbugs_by_neighborhood <- bedbug_cases %>%
+  group_by(neighborhood) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  rename(bedbug_cases = n) %>%
+  print()
+```
+
+Allston/Brighton is third highest in volume of bed bug cases, not far behind Roxbury and Dorchester
+
+```{r}
+# create a chart of bed bug case count by neighborhood
+  ggplot(data=bedbugs_by_neighborhood, aes(x = reorder(neighborhood, -bedbug_cases), y = bedbug_cases)) +
+    geom_bar(stat="identity") + 
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+    xlab("Neighborhood") +
+    ylab("# of Cases") +
+    ggtitle("Bed Bug Cases by Neighborhood - Since July 2011")
+```  
+
+
+```{r}
+# Now look at a chart of total cases (all categories) to see what Allston/Brighton's relative total volume is, i.e. is being ranked third abnormal?
+total_cases_by_neighborhood <- call_center_data_updated %>%
+  group_by(neighborhood) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  rename(total_cases = n) %>%
+  print()
+```
+
+Allston/Brighton has third highest volume here too, behind the same two neighborhoods, so maybe there isn't an abnormally large portion of bed bug cases in Allston / Brighton
+
+```{r}
+# chart of the total cases by neighborhood
+ ggplot(data=total_cases_by_neighborhood, aes(x = reorder(neighborhood, -total_cases), y = total_cases)) +
+    geom_bar(stat="identity") + 
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+    xlab("Neighborhood") +
+    ylab("# of Cases") +
+    ggtitle("Total Cases by Neighborhood - Since July 2011")
+```
+
+```{r}
+# want to join the total case count by neighborhood and bed bug case count by neighborhood summary tables to see what percentage of total cases are bed bug cases for each neighborhood
+bedbugs_and_total <- inner_join(total_cases_by_neighborhood, bedbugs_by_neighborhood, by = "neighborhood")
+
+#add a column to calculate the percentage of total
+bedbugs_and_total <- bedbugs_and_total %>%
+  mutate(percentage = round((bedbug_cases/total_cases)*100,2))
+
+#order the results for the summary table
+bedbugs_and_total_by_neighborhood <- bedbugs_and_total %>%
+  arrange(desc(percentage)) %>%
+  print()
+```
+
+Allston / Brighton is ranked 6th on this list. It might be safe to come to the conclusion that Allston / Brighton does not have an abnormally high number of bed bug cases compared to other neighborhoods after looking at the proportions. An interesting observation is that arguably the top 3 student populated neighborhoods in Boston (Fenway, Mission Hill, and Allston/Brighton) all came in the top 6 in this list of bed bug cases as a percent of total cases. There is a lot of apartment turnover each year in these neighborhoods in particular, so the thinking behind the hypothesis might be on the right track.
+
+```{r}
+# show this in a chart now
+ggplot(data=bedbugs_and_total_by_neighborhood, aes(x = reorder(neighborhood, percentage), y = percentage)) +
+    geom_bar(stat="identity") + 
+    coord_flip() +
+    xlab("Neighborhood") +
+    ylab("%") +
+    ggtitle("Bed Bug Cases as a % of All 311 Cases")
+```
+
+```{r}
+# let's now look into the bedbug cases by month to see if there's a pattern there
+bedbugs_by_yearmonth_AllBri <- bedbug_cases %>%
+  group_by(year_month) %>%
+  filter(neighborhood == "Allston / Brighton") %>%
+  count()
+  
+#chart it
+ggplot(data=bedbugs_by_yearmonth_AllBri, aes(x =year_month, y = n)) +
+    geom_bar(stat="identity") + 
+    theme(text = element_text(size=8), 
+          axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Year/Month") +
+    ylab("# Cases") +
+    ggtitle("Bed Bugs Cases by Year/Month - Allston / Brighton")
+# just able to fit all of the x-axis labels in
+```
+
+There is a clear pattern. Bed bug case volume is significantly higher around September of each year. You can notice the same spike at the same time every single year.
+
+
+```{r}
+# Now want to just look at month totals, not subjective to year
+bedbugs_by_month_AllBri <- bedbugs_by_yearmonth_AllBri %>%
+  mutate(month = substr(year_month,6,7))
+
+bedbugs_by_month_AllBri_summary <- bedbugs_by_month_AllBri %>%
+  group_by(month) %>%
+  summarise(bedbug_cases = sum(n)) %>%
+  print()
+```
+
+```{r}
+#charting it
+ggplot(data=bedbugs_by_month_AllBri_summary, aes(x =month, y = bedbug_cases, group=1)) +
+    geom_point(stat="identity") + geom_line() +
+    xlab("Month") +
+    ylab("Bedbug Cases") +
+    ggtitle("Bed Bugs Cases by Month - Allston / Brighton")
+```
+
+This shows us the total number of bed bug cases in Allston/Brighton broken down by month, since July 2011. As with the year-by-year chart above, the monthly totals are much larger during August and September. Significant spike during those months. That could just be due to weather, but could be due to the apartment turnover as hypothesized because it aligns strongly with that. Let's look at a different neighborhood for comparison.
+
+
+```{r}
+# let's make a similar summary for another neighborhood to see if this is common. This might help us determine if the pattern is just weather related... will look at Dorchester
+bedbugs_by_yearmonth_Dorchester <- bedbug_cases %>%
+  group_by(year_month) %>%
+  filter(neighborhood == "Dorchester") %>%
+  count()
+  
+#chart it
+ggplot(data=bedbugs_by_yearmonth_Dorchester, aes(x =year_month, y = n)) +
+    geom_bar(stat="identity") + 
+    theme(text = element_text(size=8), 
+          axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Year/Month") +
+    ylab("# Cases") +
+    ggtitle("Bed Bugs Cases by Year/Month - Dorchester")
+```
+
+It has peaks and valleys as well, but is it as strong of a pattern as in Allston / Brighton?
+
+```{r}
+#creating the monthly summary for Dorchester
+bedbugs_by_month_Dorchester <- bedbugs_by_yearmonth_Dorchester %>%
+  mutate(month = substr(year_month,6,7))
+
+bedbugs_by_month_Dorchester_summary <- bedbugs_by_month_Dorchester %>%
+  group_by(month) %>%
+  summarise(bedbug_cases = sum(n)) %>%
+  print()
+
+```
+
+```{r}
+#charting it
+ggplot(data=bedbugs_by_month_Dorchester_summary, aes(x =month, y = bedbug_cases, group=1)) +
+    geom_point(stat="identity") + geom_line() +
+    xlab("Month") +
+    ylab("Bedbug Cases") +
+    ggtitle("Bed Bugs Cases by Month - Dorchester")
+
+```
+
+Pretty much the same pattern as in Allston / Brighton but with July actually being the peak month. There is a slightly longer peak period as well. 
+
+
+```{r}
+# Let's look at the citywide data to see if that's the overall pattern
+
+bedbugs_by_yearmonth_ALL <- bedbug_cases %>%
+  group_by(year_month) %>%
+  count()
+  
+#chart it
+ggplot(data=bedbugs_by_yearmonth_ALL, aes(x =year_month, y = n)) +
+    geom_bar(stat="identity") + 
+    theme(text = element_text(size=8), 
+          axis.text.x = element_text(angle = 90, hjust = 1)) +
+    xlab("Year/Month") +
+    ylab("# Cases") +
+    ggtitle("Bed Bugs Cases by Year/Month - All Neighborhoods")
+```
+
+It still peaks overall during the summer but the peaks appear to be noticeably wider, so the data has a wider spread around the peaks, with more months being closer to the peak month. 
+
+```{r}
+# let's chart it just by month
+bedbugs_by_month_ALL <- bedbugs_by_yearmonth_ALL %>%
+  mutate(month = substr(year_month,6,7))
+
+bedbugs_by_month_ALL_summary <- bedbugs_by_month_ALL %>%
+  group_by(month) %>%
+  summarise(bedbug_cases = sum(n)) %>%
+  print()
+
+ggplot(data=bedbugs_by_month_ALL_summary, aes(x =month, y = bedbug_cases, group=1)) +
+    geom_point(stat="identity") + geom_line() +
+    xlab("Month") +
+    ylab("Bedbug Cases") +
+    ggtitle("Bed Bugs Cases by Month - All Neighborhoods")
+```
+
+You can see the bed bug cases still peak citywide during the summer months, but the peak is actually in August, with a slightly more sustained peak from July through September. You might be able to infer that bed bug cases are linked to warmer weather in general based on the month-to-month bed bug cases citywide (case volume peaks during the warmer months in general, with the highest point of the peak being in the hottest months of the summer). But looking back at the "Bed Bugs Cases by Month - Allston / Brighton" chart, the peak is clearly later in the summer, during September. It is also a narrower peak around that month. It seems that there might be an additional factor at play, causing the cases to spike a bit later in this neighborhood. Since this neighborhood has a very high population of renters, and the vast majority of apartments turn around on September 1st, you might be able to say that there is a link between bed bug cases and apartment turnover in Allston / Brighton. 
+
+
+
+
+
+
