@@ -1,0 +1,92 @@
+---
+title: "Hubway Network Excercise"
+author: "Brian Gridley"
+date: "February 19, 2018"
+output: pdf_document
+---
+
+```{r}
+# load the two datasets
+hubedge <- read.csv("data/hubway [Edges].csv", header = TRUE)
+hubnodes <- read.csv("data/hubway [Nodes].csv", header = TRUE)
+
+hubedge
+# could look at just one source or look at trips on a certain date or look at certain age group or gender
+arrange(hubnodes, Id)
+
+library(igraph)
+
+# filter it out to look at all routes going in and out of Union Sq... interested in this bc it is an area where a lot of people live but there is currently no train access, so the only other public transit option is the bus.. want to see how active it is
+
+# filter it to look at one from each lettered section in terminal name
+ # 7 = fan pier
+ # 52 = newbury st
+ # 27 = roxbury crossing
+ # 37 = newbalance
+ # 69 = coolidge corner
+ # 90 = lechmere
+ # 78 = Union Sq
+
+filter(hubedge, Source == "7" | Source == "52" | Source == "27" | Source == "37" | Source == "69" | Source == "90" | Source == "78")
+#534 rows
+filter(hubedge, Target == "7" | Target == "52" | Target == "27" | Target == "37" | Target == "69" | Target == "90" | Target == "78")
+#535
+filter(hubedge, Source == "78" | Target == "78")
+#138
+
+citywide <- filter(hubedge, Source == "7" | Source == "52" | Source == "27" | Source == "37" | Source == "69" | Source == "90" | Source == "78" | Target == "7" | Target == "52" | Target == "27" | Target == "37" | Target == "69" | Target == "90" | Target == "78")
+
+# too big, take a random sample from this... 50 rows
+citywidesample <- sample_n(citywide, 50)
+
+citywidelarge <- sample_n(hubedge, 50)
+
+# look at one workday morning... random day... tuesday, August 21, between 5 and 9 am
+august_day <- filter(hubedge, substr(hubedge$start_date, 1,10) == "2012-08-21" & substr(hubedge$end_date, 12,16) < "09:00" & substr(hubedge$start_date, 12,16) > "07:00")
+
+arrange(august_day, start_date)
+#48 rows
+```
+
+```{r}
+aug <- graph.data.frame(august_day)   # parse the dataframe into the igraph object mis
+
+
+
+E(aug)
+V(aug)
+V(aug)$name
+vertex_attr(aug)
+
+
+
+# Set edge width based on duration:
+E(aug)$width <- E(aug)$duration/500
+
+name <- V(aug)$name 
+
+# graph it
+plot(aug, vertex.label=name, vertex.size = 10, edge.arrow.size=.2, vertex.color="gold", 
+     vertex.frame.color="navy", vertex.label.color="navy", 
+     vertex.label.cex=0.9,edge.curved=0.2, edge.color = "gray25")                         # render the igraph object
+
+
+
+```
+
+
+```{r}
+
+# now lets try an interactive network plot
+# https://christophergandrud.github.io/networkD3/
+install.packages("networkD3")
+library(networkD3)
+
+# for the d3 network we need the original data frame with the edge list
+#lesmis <- read.delim("data/lesmis.txt", header = FALSE)
+n <- simpleNetwork(august_day)
+n
+saveNetwork(n, file = "OneAugustMorning.html") #save our javascript network to a html file
+
+```
+
