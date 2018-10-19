@@ -1,0 +1,493 @@
+---
+title: "Big Data For Cities - Final Project"
+author: "Brian Gridley"
+date: "December 13, 2017"
+output: pdf_document
+---
+
+Topic: Looking into the effects that Boston's rising housing costs are having on residents' quality of life. Specifically, I am looking into the assessed value trends as they relate to income trends. My hypothesis is that the present day mortgage debt to income ratio far exceeds that of the past. I will also be looking at other factors related to quality of life. The main data points I am researching are:
+      
+      - How has assessed value changed in comparison to income from 2011 to 2016? How has debt-to-income ratio changed (will need to calculate this)? Do fewer people qualify for a mortgage in 2016 vs 2011 (judging using standard 36% debt-to-income ratio threshold used by lenders)?
+      - How have home ownership rates changed?
+      - How have commute times changed?
+
+I chose to look into this topic because the housing crisis is something that is affecting most people's lives in and around Boston.
+
+Data used: ACS data from the Dataverse (for economic information), Property assessment data from the dataverse (for property values). While the ACS data does have median home values, it is top-coded, so it is useful to join to the property assessment data for more accurate values.
+
+Assumptions/limitations: 
+
+* Debt to income ratio - I am only considering mortgage debt (which is not very realistic as most people also carry other types of debt such as student loans / credit cards / auto loans / personal loans). I am using 36% as the maximum debt to income ratio. Although this will vary between lenders, this is the standard threshold for loan qualification. It's important to note that my debt-to-income numbers will be deflated because other forms of debt have been left out of the calculation. If added in, the numerator (monthly debt) will be larger, causing the debt-to-income ratio to be larger. So they should be much larger across the map, meaning even more census tracts will be pushed above the threshold. 
+
+* Property values - Since we do not have market values of parcels in Boston, I am analyzing assessed values and making the assumption that assessed values are relatively close to the actual market value. I will also be ignoring the fact that some properties are fully or partially paid off and instead viewing it as what the monthly mortgage payment would be if it were to be purchased today. 
+
+* Monthly mortgage payment - I am estimating the monthly mortgage payments using the assessed values, an annual interest rate of 4%, a 30 year fixed rate mortgage, and 20% down payment. This is a typical loan, with a 20% down payment representing a competitive and realistic offer needed to purchase.  
+
+* Income - the income data is top-coded. Median household incomes above $250,000 have been coded as $250,001. This data is from the ACS, so it is estimated, doesn't represent the entire population. 
+
+* Timeframe - We are unable to look at annual income data. Only places with populations larger than 65,000 are available in the 1-year ACS data. Census tracts are not this large so we have to use the 5-year ACS income data.
+
+* We do not have reliable rental dollar values (top-coded at $2000 per month), so I am ignoring rentals in the analysis. Just looking at it from a perspective of "can people afford to buy under present conditions?".
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# IMPORTING
+library(tidyverse)
+
+# the annual property assessment data 
+assessment <- read_csv("C:/Users/gridl/Documents/NEU/Classes/Big_Data/Data/PADLong.Record.2017.csv")
+
+head(assessment)
+
+# the most recent 5-yr ACS data ... 2012-2016
+ACSrecent <- read_csv("C:/Users/gridl/Documents/NEU/Classes/Big_Data/Data/ACS_1216_TRACT.csv")
+
+head(ACSrecent)
+
+# 5-year ACS from during housing crash period ... 2007-2011
+ACSpast <- read_csv("C:/Users/gridl/Documents/NEU/Classes/Big_Data/Data/ACS_0711_TRACT.csv")
+
+head(ACSpast)
+```
+
+The comparison of income and assessed value won't be perfect. I am just going to look at the median_AV_11 assessed value to compare to the median income from the 2007-2011 5 yr ACS and look at median_AV_16 to compare to the median income from the 2012-2016 ACS. Because of the nature of the real estate crash, if we take the median assessed values during these two time spans, they will be very close to one another (and not very useful for analysis). The 5 year period from 2007-2011 represents the crash when values were declining and 2012-2016 is the recovery when values were increasing back to those previous levels. I maade the decision to look at just the bottomed out assessed value in 2011 and the peak assessed value in 2016 when comparing to the two 5-year median income points we have. This isn't a statistically perfect comparison but should be more useful to look at.
+
+It would be perfect if I could obtain annual census tract level income data, but I wasn't able to do this because the 1 year ACS only looks at larger geographies. So we are forced to use 5 yr ACS income data here.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#DATA ORGANIZATION AND CALCULATIONS
+
+# I will first need to aggregate the assessment data at the census tract level to join with ACS income
+# calculating annual median assessed values for all residential properties
+# and bringing in the neighborhood and median lat/long values for each tract
+
+assessment_tract <- assessment %>%
+                          group_by(CT_ID_10) %>%
+                          filter(LU2017FourCat == "Res") %>%
+                          summarise(neighborhood = max(BRA_PD),
+                                    median_AV_07 = median(FY2007.AV, na.rm = TRUE),
+                                    median_AV_08 = median(FY2008.AV, na.rm = TRUE),
+                                    median_AV_09 = median(FY2009.AV, na.rm = TRUE),
+                                    median_AV_10 = median(FY2010.AV, na.rm = TRUE),
+                                    median_AV_11 = median(FY2011.AV, na.rm = TRUE),
+                                    median_AV_12 = median(FY2012.AV, na.rm = TRUE),
+                                    median_AV_13 = median(FY2013.AV, na.rm = TRUE),
+                                    median_AV_14 = median(FY2014.AV, na.rm = TRUE),
+                                    median_AV_15 = median(FY2015.AV, na.rm = TRUE),
+                                    median_AV_16 = median(FY2016.AV, na.rm = TRUE),
+                                    X = median(X),
+                                    Y = median(Y))
+
+# calculating the mortgage payment using the following formula:
+# pmt = amount borrowed / discount factor
+# amount borrowed = the assessed value * 0.80 ... because we're assuming a 20% down payment
+# discount factor = {[(1+i)^n]-1}/[i(1+i)^n] ... where i is the periodic interest rate and n is total number of loan pmts
+# in this case:
+#       n = 12*30 = 360
+#       i = 0.04/12 = 0.003333333
+# discount factor = ((1.003333333^360)-1)/(0.003333333*(1.003333333^360)) = 209.4613
+
+
+12*30
+0.04/12
+
+((1.003333333^360)-1)/(0.003333333*(1.003333333^360))                                  
+
+head(assessment_tract)
+
+assessment_summary <- mutate(assessment_tract, monthly_pmt_2011 = ((median_AV_11 * 0.8)/209.4613), monthly_pmt_2016 = ((median_AV_16 * 0.8)/209.4613))
+
+head(assessment_summary)
+
+# now want to join this to ACS data to bring in income and other variables for summary table
+
+# prep the ACS table
+ACSpast_join <- select(ACSpast, CT_ID_10, RentersPer2011 = RentersPer, 
+                       HomeOwnPer2011 = HomeOwnPer, PubAssist2011 = PubAssist, 
+                       CommuteLess10_2011 = CommuteLess10, Commute1030_2011 = Commute1030, 
+                       Commute3060_2011 = Commute3060, Commute6090_2011 = Commute6090, 
+                       CommuteOver90_2011 = CommuteOver90, MedHouseIncome2011 = MedHouseIncome)
+
+ACSrecent_join <- select(ACSrecent, CT_ID_10, RentersPer2016 = RentersPer, 
+                       HomeOwnPer2016 = HomeOwnPer, PubAssist2016 = PubAssist, 
+                       CommuteLess10_2016 = CommuteLess10, Commute1030_2016 = Commute1030, 
+                       Commute3060_2016 = Commute3060, Commute6090_2016 = Commute6090, 
+                       CommuteOver90_2016 = CommuteOver90, MedHouseIncome2016 = MedHouseIncome)
+
+# do the joins for final table
+#2011
+assessment_summary <-inner_join(assessment_summary, ACSpast_join, by = "CT_ID_10")
+#2016
+assessment_summary <-inner_join(assessment_summary, ACSrecent_join, by = "CT_ID_10")
+
+# adding columns for monthly income
+assessment_summary <- mutate(assessment_summary, monthly_inc_2011 = (MedHouseIncome2011/12), monthly_inc_2016 = (MedHouseIncome2016/12))
+
+# adding columns for debt to income ratio
+assessment_summary <- mutate(assessment_summary, debt_inc_ratio_2011 = monthly_pmt_2011/monthly_inc_2011, debt_inc_ratio_2016 = monthly_pmt_2016/monthly_inc_2016)
+
+# note that most people carry more debt than just a mortgage, so these numbers do not encompass everything that would go into the debt to income ratio, this is more accurately just a mortgage to income ratio. Most people's debt-to-income ratio will be much higher with the additional debt factored in and will be approved for a lower monthly mortgage to account for this... 
+
+
+# adding additional calculations of interest for charts
+summary_tract <- assessment_summary %>%
+                                select(1:2,7,12:38) %>%
+                                mutate(income_change_pct = (((MedHouseIncome2016 - MedHouseIncome2011)/MedHouseIncome2011)*100),
+                                        AV_change_pct = (((median_AV_16 - median_AV_11)/median_AV_11)*100),
+                                        debt_inc_change_pct = ((debt_inc_ratio_2016 - debt_inc_ratio_2011)*100),
+                                        Renter_change_pct = ((RentersPer2016 - RentersPer2011)*100),
+                                        HomeOwn_change_pct = ((HomeOwnPer2016 - HomeOwnPer2011)*100),
+                                        PubAssist_change_pct = ((PubAssist2016 - PubAssist2011)*100),
+                                        CommuteLess10_change_pct = ((CommuteLess10_2016 - CommuteLess10_2011)*100),
+                                        Commute1030_change_pct = ((Commute1030_2016 - Commute1030_2011)*100),
+                                        Commute3060_change_pct = ((Commute3060_2016 - Commute3060_2011)*100),
+                                        Commute6090_change_pct = ((Commute6090_2016 - Commute6090_2011)*100),
+                                        CommuteOver90_change_pct = ((CommuteOver90_2016 - CommuteOver90_2011)*100),
+                                        above_threshold_2011 = debt_inc_ratio_2011 > 0.36, 
+                                        above_threshold_2016 = debt_inc_ratio_2016 > 0.36)
+
+
+# aggregate it by neighborhood
+summary_neighborhood <- summary_tract %>%
+                                  group_by(neighborhood) %>%
+                                  summarise(AV_2011 = median(median_AV_11),
+                                            AV_2016 = median(median_AV_16),
+                                            income_2011 = median(MedHouseIncome2011),
+                                            income_2016 = median(MedHouseIncome2016),
+                                            ratio_2011 = median(debt_inc_ratio_2011),
+                                            ratio_2016 = median(debt_inc_ratio_2016),
+                                            AV_median_diff_pct = (((AV_2016 - AV_2011)/AV_2011)*100),
+                                            income_median_diff_pct = (((income_2016 - income_2011)/income_2011)*100),
+                                            debt_inc_diff_pct = sum(debt_inc_change_pct),
+                                            Renter_diff_pct = sum(Renter_change_pct),
+                                            HomeOwn_diff_pct = sum(HomeOwn_change_pct),
+                                            PubAssist_diff_pct = sum(PubAssist_change_pct),
+                                            CommuteLess10_diff_pct = sum(CommuteLess10_change_pct),
+                                            Commute1030_diff_pct = sum(Commute1030_change_pct),
+                                            Commute3060_diff_pct = sum(Commute3060_change_pct),
+                                            Commute6090_diff_pct = sum(Commute6090_change_pct),
+                                            CommuteOver90_diff_pct = sum(CommuteOver90_change_pct)
+                                            ) %>%
+                                  arrange(neighborhood)
+
+
+summary_neighborhood
+
+# NOTE: not sure what the BRA considers the neighborhood of "Central" to be
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# CHARTS
+library(sf)
+
+# import the boston neighborhoods file for mapping
+bos_nhoods <- sf::read_sf(
+  "C:/Users/gridl/Documents/NEU/Classes/Big_Data/Data/Boston_Neighborhoods.geojson")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# since my analysis focuses on the rising housing costs, I'll start out by examining 
+# the assessed values across Boston
+
+# look at the assessed values on a map to visualize it spatially
+ 
+# I originally tried to map the assessed values and they all were showing as the lowest color
+# After looking into the data, I found that there was one census tract in the South End with a median AV much higher than everywhere else
+# It was causing everything else to be at the very bottom of the scale, so I filtered this tract out in the map below
+
+# Ordered by AV to see range of values
+summary_tract[with(summary_tract, order(median_AV_11)), ]
+# tract 25025070402 appears to be the problem. The median AV is 7.3 million, while the next highest is not even 1 million
+
+# looking into the property level data, you can see all properties in this tract are very high in value
+# I wouldn't say it's bad data, it just makes mapping it hard, so we'll exclude this tract from the AV maps
+filter(assessment, CT_ID_10 ==  25025070402)
+
+# filtering out this tract in the map, so we can see the variation in values on the map without the outliers
+
+# 2011 Median assessed values mapped at the census tract level
+ggplot(bos_nhoods) +
+  geom_sf() +
+  geom_point(data = filter(summary_tract, CT_ID_10 != 25025070402), aes(x = X, y = Y, color = median_AV_11)) +
+    scale_color_gradientn("Assessed Value",
+                        colors = c("purple", "blue", "green", "yellow", "orange", "red"),
+                        labels = scales::dollar_format(prefix = "$")) +
+  ggtitle("Median Assessed Values by census tract - 2011")
+```
+
+
+
+If you're familiar with Boston, this map makes sense and doesn't provide any real surprises in terms of where the highest valued homes are located. The neighborhoods in the southern portion of Boston (Dorchester, Mattapan, Hyde Park, Roxbury, have always been valued lower than other areas.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# 2016 Median assessed values mapped 
+ggplot(bos_nhoods) +
+  geom_sf() +
+  geom_point(data = filter(summary_tract, CT_ID_10 != 25025070402), aes(x = X, y = Y, color = median_AV_16)) +
+    scale_color_gradientn("Assessed Value",
+                        colors = c("purple", "blue", "green", "yellow", "orange", "red"),
+                        labels = scales::dollar_format(prefix = "$")) +
+  ggtitle("Median Assessed Values by census tract - 2016")
+```
+
+
+
+While the values are all higher (see the legend), it is still relatively the same pattern across the city in terms of where the highest and lowest valued homes are located.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# want to show assessed value grouped boxplot, showing boxplot for each neighborhood for both years next to each other
+# need to reorganize data in new data frame for this chart
+
+ # filter out residential records
+boxplot_AV <- filter(assessment, LU2017FourCat == "Res")
+
+boxplot_AV %>%
+  group_by(BRA_PD) %>%
+  summarise(AV = mean (FY2011.AV, na.rm = TRUE))
+
+# want to remove the neighborhood "14"
+boxplot_AV <- filter(boxplot_AV, BRA_PD != "14")
+
+# now create the data frame for chart
+boxplot_AV_2011 <- boxplot_AV %>%
+                      select(Neighborhood = BRA_PD) %>%
+                      mutate(Year = "2011",
+                             Value = boxplot_AV$FY2011.AV)
+
+boxplot_AV_2016 <- boxplot_AV %>%
+                      select(Neighborhood = BRA_PD) %>%
+                      mutate(Year = "2016",
+                             Value = boxplot_AV$FY2016.AV)
+
+boxplot_AV_combined = rbind(boxplot_AV_2011, boxplot_AV_2016)
+
+
+# Chart it
+ggplot(boxplot_AV_combined, aes(x=Neighborhood, y=Value, fill = Year)) +
+    geom_boxplot() +
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) 
+
+# the chart is not looking too great because of high outliers, I'll have to set limits in the chart
+# the chart below filters it to homes under $1 million
+ggplot(boxplot_AV_combined, aes(x=Neighborhood, y=Value, fill = Year)) +
+    geom_boxplot() +
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+    scale_y_continuous(limits = c(0,1000000), labels = scales::dollar) +
+    ylab("Value") +
+    ggtitle("Median Assessed Values in Boston (Homes under $1 Million)")
+```
+
+
+Note that the statistics change when you filter out the higher outliers, but this is more relatable for the "average buyer" to look at. It's interesting to see the variation in the spread of the data between neighborhoods. Note that the median value increased across all neighborhoods. Certain neighborhoods such as the South End and Jamaica Plain had a wide range between the 1st quartile and 3rd quartile, while others such as Mattapan and Hyde Park had smaller range. You can also see which neighborhoods seem to be appreciating at a higher rate (such as East Boston).
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# I now want to look at the changes in assessed value to see where the city is changing
+
+# chart of assessed value changes by neighborhood
+ ggplot(data=summary_neighborhood, aes(x = reorder(neighborhood, -AV_median_diff_pct), y = AV_median_diff_pct)) +
+    geom_bar(stat="identity") + 
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+    xlab("Neighborhood") +
+    ylab("% Change") +
+    ggtitle("Change in Median Assessed Value - 2011 - 2016")
+```
+
+
+As we already know, median home values increased significantly across every neighborhood in this time span. This shows us that East Boston and Dorchester have seen the highest appreciation.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Put it on a map to visualize it across the city, at the census tract level
+ggplot(bos_nhoods) +
+  geom_sf() +
+  geom_point(data = summary_tract, aes(x = X, y = Y, color = AV_change_pct)) +
+  scale_color_gradientn("Percent",
+                        colors = c("black", "purple", "red")) +
+  ggtitle("Assessed Value Change (2011 - 2016)")
+```
+
+
+This map shows us a different story than the previous ones. You can see a lot of the areas seeing the highest appreciation are areas that previously had lower values (like East Boston and parts of Dorchester). Although other previously high valued areas are still appreciating at a high rate, like Jamaica Plain and Charlestown.
+
+As the bar chart showed us, there is a lot of red in East Boston, where there has been the highest appreciation. You can also notice the higher appreciation in Jamaica Plain, North Dorchester, and Charlestown, which were all at the top of the chart. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# I want to make a chart visualize how median assessed values and 
+# median incomes compare across neighborhoods
+
+ggplot(summary_neighborhood, aes(x=income_2016, y=AV_2016, fill=neighborhood)) +
+  geom_point() +
+  geom_label(label=summary_neighborhood$neighborhood, color="white", size=3) +
+  guides(fill=FALSE) +
+  scale_y_continuous(labels = scales::dollar) +
+  scale_x_continuous(labels = scales::dollar) +
+  xlab("Median Income") +
+  ylab("Median Assessed Value") +
+    ggtitle("Income vs Assessed Property Value by Neighborhood (2016)")
+
+```
+
+
+This chart tells us a lot by just glancing at it. You can visualize how assessed values compare to incomes of the residents in each neighborhood. You can definitely notice a trend, as median incomes tend to be higher in neighborhoods with higher assessed values. This makes sense because you need a higher income in order to afford to live in higher priced homes. It's interesting to see that the South End is an outlier here. There is a lot of low income housing in the South End neighborhood, which might explain why the median income is so low compared to it's high median assessed value. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# let's look at how the debt to income ratio has changed across the city, to address my hypothesis
+ggplot(data=summary_neighborhood, aes(x = reorder(neighborhood, -debt_inc_diff_pct), y = debt_inc_diff_pct)) +
+    geom_bar(stat="identity", fill = "blue", color = "black") + 
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+    xlab("Neighborhood") +
+    ylab("% Change") +
+    ggtitle("Change in Hypothetical Debt-to-Income Ratio (2011 - 2016)")
+
+# I see that Hyde Park and Roslindale did not have any data here.
+# this is because there was no income data
+```
+
+
+Note that the debt used in this calculation is hypothetical mortgage debt. It's not debt that people actually have, but the median debt per neighborhood based on purchasing houses at their current values. You can see this ratio has increased across all neighborhoods of Boston (except for 2 that saw a decrease). This means that people would be carrying a larger portion of debt in relation to income now vs in 2011 if they were to purchase a home under the current economic conditions.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# mapping the change in hypothetical DTI ratio across census tracts
+ggplot(bos_nhoods) +
+  geom_sf() +
+  geom_point(data = summary_tract, aes(x = X, y = Y, color = debt_inc_change_pct)) +
+  scale_color_gradientn("Percent",
+                        colors = c("red", "yellow", "green")) +
+  ggtitle("Hypothetical Debt-to-Income Ratio Change (2011 - 2016)")
+
+# it looks like there is an area seeing a large increase that might be throwing the color scaling off
+
+# Ordered by AV to see range of values
+summary_tract[with(summary_tract, order(-debt_inc_change_pct)), ]
+# yes, there is one census tract that is much higher than the others
+# It is the same tract that was throwing the assessed value maps off earlier
+# As noted previously, the assessed values are extremely high in this tract
+# so it makes sense that the DTI ratio would be thrown off too
+
+# filtering that tract out,
+ggplot(bos_nhoods) +
+  geom_sf() +
+  geom_point(data = filter(summary_tract, CT_ID_10 != 25025070402, CT_ID_10 != 25025010103), aes(x = X, y = Y, color = debt_inc_change_pct)) +
+  scale_color_gradientn("Percent",
+                        colors = c("green", "red")) +
+    ggtitle("Hypothetical Debt-to-Income Ratio Change (2011 - 2016)")
+```
+
+
+There are areas where the ratio has decreased across the city (bright green), but there are a lot of areas where it has increased. It looks like the majority of tracts have increased slightly (mustard brownish color). A couple of the areas where it has increased the most are Northern Dorchester and Jamaica Plain, where we noticed the largest increases in assessed value.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Going back to the original research question...
+# want to target the census tracts that have a DTI ratio above the threshold for 
+# qualifying for a mortgage
+
+# want to show them both side by side for easy comparison
+library(gridExtra)
+
+#2011 tracts above DTI threshold
+plot2011 <- ggplot(bos_nhoods) +
+                geom_sf() +
+                geom_point(data = filter(summary_tract, above_threshold_2011 == TRUE), 
+                          aes(x = X, y = Y), color = "red") +
+                theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+                ggtitle("Won't Qualify for Mortgage - 2011")
+
+#2016 tracts above DTI threshold
+plot2016 <- ggplot(bos_nhoods) +
+                geom_sf() +
+                geom_point(data = filter(summary_tract, above_threshold_2016 == TRUE), 
+                           aes(x = X, y = Y), color = "red") +
+                theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+                ggtitle("Won't Qualify for Mortgage - 2016")
+
+
+grid.arrange(plot2011,plot2016,ncol=2)
+
+count(summary_tract, above_threshold_2011)
+count(summary_tract, above_threshold_2016)
+```
+
+
+This map is showing the number of census tracts each year that have a Debt-to-Income ratio above 35%, which is the rate that most lenders use to determine if you qualify for a mortgage. Remember that these numbers that I am using don't include other forms of debt, so in reality the ratios would be much hhigher across the board. You can see that there are many more census tracts highlighted in the 2016 map. So the median resident would not qualify for a mortgage in more tracts in 2016 than in 2011. Looking at the data, you can see there are 62 of these census tracts (out of 169) in 2016 compared to 47 in 2011.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Home Ownership Change
+
+
+count(summary_tract, HomeOwn_change_pct > 0)
+
+ggplot(data=summary_neighborhood, 
+       aes(x = reorder(neighborhood, -HomeOwn_diff_pct), y = HomeOwn_diff_pct)) +
+    geom_bar(stat="identity", fill = "blue", color = "black") + 
+    theme(axis.text.x = element_text(angle = 55, hjust = 1)) +
+    xlab("Neighborhood") +
+    ylab("% Change") +
+    ggtitle("Change in Home Ownership (2011 - 2016)")
+
+
+ggplot(bos_nhoods) +
+  geom_sf() +
+  geom_point(data = summary_tract, aes(x = X, y = Y, color = HomeOwn_change_pct)) +
+  scale_color_gradientn("Percent",
+                        colors = c("red", "yellow", "green")) +
+  ggtitle("Home Ownership change from 2011 - 2016")
+```
+
+
+At the census tract level, 86 tracts have seen home ownership rates increase from 2011-2016, while 81 have seen it decrease. It's also split fairly evenly at a neighborhood level, with 7 neighborhoods seeing an increase and 7 seeing a decrease. Roxbury has taken the hardest hit. They were at the top of the list in assessed value increase as well as DTI ratio increase so the housing crisis has affected this neighborhood greatly.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Want to look at how commute times have changed
+# I want to make a stacked bar plot but my data in the summary table is not organized properly for this
+# I'll make a new table in tidy format to be used for the barplot, I want commute time as the stacks, year as the x axis, percent as y
+
+# make separate tables for each commute time bin and then combine them into one table
+barplot_2011_less10 <- data.frame(Year= "2011", Commute = "CommuteLess10", percent = summary_tract$CommuteLess10_2011)
+barplot_2011_1030 <- data.frame(Year= "2011", Commute = "Commute1030", percent = summary_tract$Commute1030_2011)
+barplot_2011_3060 <- data.frame(Year= "2011", Commute = "Commute3060", percent = summary_tract$Commute3060_2011)
+barplot_2011_6090 <- data.frame(Year= "2011", Commute = "Commute6090", percent = summary_tract$Commute6090_2011)
+barplot_2011_over90 <- data.frame(Year= "2011", Commute = "CommuteOver90", percent = summary_tract$CommuteOver90_2011)
+barplot_2016_less10 <- data.frame(Year= "2016", Commute = "CommuteLess10", percent = summary_tract$CommuteLess10_2016)
+barplot_2016_1030 <- data.frame(Year= "2016", Commute = "Commute1030", percent = summary_tract$Commute1030_2016)
+barplot_2016_3060 <- data.frame(Year= "2016", Commute = "Commute3060", percent = summary_tract$Commute3060_2016)
+barplot_2016_6090 <- data.frame(Year= "2016", Commute = "Commute6090", percent = summary_tract$Commute6090_2016)
+barplot_2016_over90 <- data.frame(Year= "2016", Commute = "CommuteOver90", percent = summary_tract$CommuteOver90_2016)
+            
+# combine them into one table
+
+barplot_commute = rbind(barplot_2011_less10, barplot_2011_1030, barplot_2011_3060, barplot_2011_6090, barplot_2011_over90, barplot_2016_less10, barplot_2016_1030, barplot_2016_3060, barplot_2016_6090, barplot_2016_over90)
+
+# remove all "N/A"'s
+barplot_commute <- na.omit(barplot_commute)
+          
+barplot_commute %>%
+  group_by(Year, Commute) %>%
+  summarise(total = sum(percent, na.rm = TRUE))
+
+# now I can chart it
+ggplot(data = barplot_commute, aes(fill=Commute, y=percent, x=Year)) +
+    geom_bar(stat="identity") +
+    scale_fill_brewer(palette="Paired")
+
+```
+
+
+From this chart, you can see the proportion of commute times less than 30 minutes have decreased while those bins over 30 have increased from 2011 to 2016. Commute times are getting longer across the city. You might be able to conclude from this that people are now living further away from their jobs to combat the rising costs of living, although there are many other variables at play that might be affecting the commute times (such as transportation issues, a change in mode of transportation across areas (people now bike instead of taking the T), etc). 
+
+SUMMARY
+
+From the analysis, I can conclude that the increase in housing prices has appeared to have a negative effect on the quality of life of citizens in Boston. As discussed above, based on current levels of assessed property values, residents would be carrying a larger proportion of debt to income now than they did in the past. Based on median assessed values and incomes, fewer residents will qualify for a mortgage based on current economic conditions. Additionally, home ownership rates have decreased in many areas across the city while commute times to work have increased.
+
+
+
+
+
+
+
+
