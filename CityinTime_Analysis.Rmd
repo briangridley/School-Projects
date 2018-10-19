@@ -1,0 +1,391 @@
+---
+title: "My City in Time and Space"
+author: "Brian Gridley"
+date: "March 12, 2018"
+output: pdf_document
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# import the BPDA dataset
+library(tidyverse)
+
+dev_data <- read_csv("C:/Users/gridl/Documents/NEU/Classes/Data_vz/City_in_Time/BPDA_data/Article80_Projects_as_of_July_2016.csv")
+```
+
+```{r}
+dev_data
+
+# cut data down to all projects from 2010 - end of 2015
+datacut <- dev_data %>%
+  filter(EnteredDate > "2010-01-01", EnteredDate < "2016-01-01")
+
+```
+
+```{r}
+# projects per neighborhood
+Nhood_data <- datacut %>%
+                  group_by(ProjectNeighborhood) %>%
+                    summarise(projects = n(), 
+                              residential_units = sum(TotalResidentialUnits, na.rm = TRUE),
+                              units_per_proj = round(residential_units/projects,1)) %>%
+                    arrange(desc(residential_units))
+
+# maybe put together a visual of units per project to show where the largest residential buildings are being built... can add thhis data to Bos_neighborhoods file
+
+# largest residential projects
+datacut %>%
+  arrange(desc(TotalResidentialUnits))
+
+datacut %>%
+  arrange(desc(ProposedCost))
+
+datacut %>%
+  group_by(Developer) %>%
+  summarise(developercount = n()) %>%
+  arrange(desc(developercount))
+# a lot of universities
+
+datacut %>%
+  select(TotalResidentialUnits, EnteredDate, WebCategory) %>%
+  arrange(EnteredDate)
+
+datacut
+```
+
+
+```{r}
+# visuals
+
+library(sf)
+library(tigris)
+library(viridis)
+library(ggplot2)
+
+getwd()
+
+
+Bosnbhds <- sf::read_sf("C:/Users/gridl/Documents/NEU/Classes/Data_vz/City_in_Time/BPDA_data/Boston_Neighborhoods.geojson")
+
+
+
+# show table of units added by year across boston.. or line graph by month? units as Y
+
+# map of all residential units added across Boston
+ggplot(Bosnbhds) +
+  geom_sf() +
+  geom_point(data = filter(datacut, TotalResidentialUnits >0), 
+             aes(x = X, y = Y, size = TotalResidentialUnits),
+             color = "black", fill = "red1", shape = 21) + 
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        legend.key = element_blank()) 
+
+
+#### USE THIS ONE... much cleaner
+AllDevProjects <- 
+ggplot(Bosnbhds) +
+  geom_sf() +
+  geom_point(data = datacut, 
+             aes(x = X, y = Y, alpha = TotalResidentialUnits, size = TotalResidentialUnits), 
+                shape = 21, fill = "#99000D") + 
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.position = "none") +
+  labs(title = "All Development Projects",
+       caption = "size of dot representative of # of residential units added in each project")
+
+
+jpeg('AllDevProjects.jpg')
+AllDevProjects
+dev.off()
+
+```
+
+
+```{r}
+Nhood_data # want to map this as chloropleth by neighborhood... add columns to Bosnbhds geojson
+
+# can map like this for example
+ggplot(Bosnbhds) +
+  geom_sf(aes(fill = Acres)) +
+  scale_fill_gradientn(colors = c("white", "red","black"))
+
+#scale_fill_viridis(option = "magma")
+
+# need to add data to the Bosnbhds geojson file for this to work
+Bosnbhds$Name
+# 26 neighborhoods... how do the names compare to my dataset
+
+Nhood_data$ProjectNeighborhood
+# 23 neighborhoods ... 
+# Comparing the names, it looks like everything matches except out file does not contain "Bay Village", "Harbor Islands", "Leather District", and "Beacon Hill"
+
+
+# want to bring the data of interest into the geojson file
+
+# rename "ProjectNeighborhood"" to match Bosnbhds "Name" 
+colnames(Nhood_data)[1] <- "Name"
+
+
+# copy into new object to preserve original object
+Bosnbhds_joined <- Bosnbhds
+
+
+# merge data into
+Bosnbhds_joined@data <- merge(Bosnbhds_joined@data, Nhood_data)
+
+#looking at colors in brewer reds scale to identify what color to put for NA values
+library(RColorBrewer)
+brewer.pal(n = 8, name = "Reds")
+
+# map chloropleth of units... USE THIS ONE ALONGSIDE INDIVIDUAL PROJECTS MAP
+UnitsChloropleth <- 
+ggplot(Bosnbhds_joined) +
+  geom_sf(aes(fill = residential_units)) +
+  scale_fill_gradientn(colors = c("gray80", "#99000D"), na.value = "gray80") +
+   theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.key = element_blank()) +
+  labs(title = "Residential Units Added per Neighborhood",
+       fill = "Units")
+
+jpeg('UnitsChloropleth.jpg')
+UnitsChloropleth
+dev.off()
+
+
+
+ggplot(Bosnbhds_joined) +
+  geom_sf(aes(fill = units_per_proj)) +
+  scale_fill_distiller(direction = 1, palette = "Reds", na.value = "#FFF5F0") +
+   theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        legend.key = element_blank())
+# probably won't use this
+
+
+```
+
+```{r}
+Nhood_data
+```
+
+
+```{r}
+# looking at just south boston
+datacut %>%
+  filter(ProjectNeighborhood == "South Boston Waterfront" | ProjectNeighborhood == "South Boston") %>%
+  arrange(X)
+
+
+#using same color palette
+brewer.pal(n = 8, name = "Reds")
+
+# just look at South Boston
+SouthBoston <-
+ggplot(filter(Bosnbhds, Neighborhood_ID == "29" | Neighborhood_ID == "17")) +
+  geom_sf() +
+  geom_point(data = filter(datacut, ProjectNeighborhood == "South Boston Waterfront" | ProjectNeighborhood == "South Boston", TotalResidentialUnits > 0), aes(x = X, y = Y, size = TotalResidentialUnits),
+             color = "black", fill = "#EF3B2C", shape = 21) +
+  geom_point(data = filter(datacut, ProjectNeighborhood == "South Boston Waterfront" | ProjectNeighborhood == "South Boston", TotalResidentialUnits == 0, ProjectID != 1796), 
+             aes(x = X, y = Y), 
+             size = 2, shape = 4, color = "black") +
+   theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.key = element_blank()) +
+  labs(title = "South Boston at a Glance",
+       subtitle = "All Development Projects...",
+       size = "Residential Units",
+       fill = "Non-Residential Projects",
+       caption = "black 'X' represents a non-residential development project")
+
+
+jpeg('SouthBoston.jpg')
+SouthBoston
+dev.off()
+```
+
+```{r}
+# population 
+# will pull in from census api
+
+library(tidycensus)
+
+census_api_key("xxx")
+
+sf1 <- tidycensus::load_variables(2010, dataset = "acs5")
+View(sf1)
+
+# total population is "B01003_001"
+
+bos_pop2010 <- get_acs(state = "MA", county = "Suffolk", geography = "tract", 
+                  variables = "B01003_001", year = 2010, geometry = TRUE)
+
+
+bos_pop2015 <- get_acs(state = "MA", county = "Suffolk", geography = "tract", 
+                  variables = "B01003_001", year = 2015, geometry = TRUE)
+
+
+
+# want calculate pop change 2010-2015, so need both yeas estimates in one table
+
+# merge won't work with spatial tables, so arrange both by GEOID and add columns as workaround
+bos_pop2010 <- arrange(bos_pop2010, GEOID)
+bos_pop2015 <- arrange(bos_pop2015, GEOID)
+
+# bring in 2010 estimates to 2015 table, a merge is not needed 
+# bc I checked that tracts are in the same order in both tables
+bos_pop2015$estimate2010 <- bos_pop2010$estimate
+
+# now add population change column
+bos_pop2015$popchange <- bos_pop2015$estimate - bos_pop2015$estimate2010
+
+arrange(bos_pop2015, popchange)
+
+
+
+#map the pop change per tract
+populationchange <-
+  ggplot(bos_pop2015, aes(fill = popchange)) + 
+  geom_sf() + 
+scale_fill_gradientn(breaks = c(-3000,0,3000), limits = c(-3000,3000), colors = c("black", "white", "red")) +
+   theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.key = element_blank()) +
+  labs(title = "Estimated Population Change per Census Tract",
+       subtitle = "American Community Survey data (statistical estimates)",
+       fill = "People")
+
+jpeg('populationchange.jpg')
+populationchange
+dev.off()
+```
+
+
+
+```{r}
+# CHARTS
+Nhood_data2 <- filter(Nhood_data, Name != "NA")
+
+# chart of units per neighborhood to put under map
+nhood_chart <- 
+  ggplot(data=Nhood_data2, aes(x = reorder(Name, residential_units), y = residential_units)) +
+    geom_bar(stat="identity", fill = "#99000D") + 
+    coord_flip() +
+   theme(axis.ticks.x = element_line(color = "black"),
+         axis.line.x = element_line(color = "black"),
+         panel.background = element_blank(),
+        plot.title = element_text(size=18),
+         legend.key = element_blank()) +
+  scale_y_continuous(limits = c(0,3000), labels = scales::comma) +
+    xlab("") +
+    ylab("") +
+    ggtitle("Residential Units Added per Neighborhood")
+
+jpeg('nhood_chart.jpg')
+nhood_chart
+dev.off()
+
+
+
+# add colummns identifying month and year for timeline chart
+datacut_month <- datacut %>% 
+  mutate(Year = substring(EnteredDate,1,4), Month = substring(EnteredDate,1,7))
+
+select(datacut_month, EnteredDate, Year, Month)
+
+datacut_timesum <- datacut_month %>%
+  group_by(Year) %>%
+  summarise(Units = sum(TotalResidentialUnits, na.rm = TRUE)) %>%
+  print()
+
+# plot line chart of unit change vs pop change
+
+timeline_chart <-
+  ggplot(datacut_timesum, aes(x = Year, y = Units, group = 1)) + 
+      geom_line(stat = "identity", color = "#99000D", size = 1.5) +
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.key = element_blank()) +
+  scale_y_continuous(limits = c(0,6000),  labels = scales::comma) +
+ggtitle("Timeline of Residential Units Added") +
+xlab("Year") +
+ylab("Units")
+
+
+jpeg('timeline_chart.jpg')
+timeline_chart
+dev.off()
+
+
+# bar chart of units added next to people added
+sum(bos_pop2015$popchange)
+# 54459
+sum(Nhood_data$residential_units)
+# 24388
+
+barchart <- tibble(variable = c("Units","Population"), value = c(24388,54459))
+
+PopvsUnits <- 
+ggplot(barchart, aes(x = variable, y = value)) +
+  geom_bar(stat = "identity", fill = "#99000D", width = .4) +
+  scale_y_continuous(limits = c(0,60000), labels = scales::comma) + 
+  theme(axis.title = element_blank(),
+        axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+  ggtitle("Population vs Housing Unit Change")
+
+jpeg('PopvsUnits.jpg')
+PopvsUnits
+dev.off()
+
+
+
+# make a pie chart showing percentage of projects that add residential units (if that doesn;t look good, do a pie chart for units added per neighborhood)
+
+datacut %>%
+  summarise(residential_projects = sum(TotalResidentialUnits > 0, na.rm = TRUE))
+# 214
+
+piechart <- tibble(variable = c("Residential","Non-Residential"), value = c(214,153))
+
+
+with(piechart,pie(value, labels = element_blank(), radius=1, col = c("#99000D","white")))
+
+jpeg('Residential_pie.jpg')
+with(piechart,pie(value, labels = element_blank(), radius=1, col = c("#99000D","white")))
+dev.off()
+
+```
+
+
+
+
+
