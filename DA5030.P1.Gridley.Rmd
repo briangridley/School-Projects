@@ -1,0 +1,758 @@
+---
+title: "DA5030 - Practicum 1"
+author: "Brian Gridley"
+date: "October 3, 2018"
+output: pdf_document
+---
+
+
+
+
+PROBLEM 1:
+
+
+1. Download the data set Glass Identification Database along with its explanation. Note that the data file does not contain header names; you may wish to add those. The description of each column can be found in the data set explanation. This assignment must be completed within an R Markdown Notebook.
+
+```{r}
+# downloading the data from the url and creating a dataframe with the data ("glass_ID")
+
+dataurl <- "https://archive.ics.uci.edu/ml/machine-learning-databases/glass/glass.data"
+download.file(url = dataurl, destfile = "glass.data")
+glass_ID <- read.csv("glass.data", header = FALSE)
+
+head(glass_ID)
+
+# also want to download the explanation text file just to reference 
+# for description of variables
+
+data_desc_url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/glass/glass.names"
+download.file(url = data_desc_url, destfile = "glass.names")
+glass_ID_desc <- read.delim("glass.names", header = FALSE)
+
+# Add column headers to the data, using the variable descriptions in the "glass_ID_desc" file
+names(glass_ID) <- c("Id","RI","Na","Mg","Al","Si",
+                     "K","Ca","Ba","Fe","glass_type")
+
+head(glass_ID)
+# looks good!
+```
+
+
+2. Explore the data set as you see fit and that allows you to get a sense of the data and get comfortable with it.
+
+```{r}
+head(glass_ID)
+
+# looking at the structure
+str(glass_ID)
+
+summary(glass_ID)
+```
+
+There are 214 rows and 11 variables. The 'Id' column is just numbered 1-214 and isn't a useful column so we may want to remove it later. The 'glass_type' column is categorical, so we may want to consider converting it to a factor later. The remaining columns are decimal, with different ranges.
+
+```{r}
+# I want to explore the sums of columns 3-10 to see if they add up to 100 
+# and make sure I understand what the data is representing
+library(tidyverse)
+ 
+glass_ID <- mutate(glass_ID, sums = rowSums(glass_ID[,c(3:10)]))
+
+summary(glass_ID$sums)
+# yes, it looks like the elements in columns 3-10 add up to 100, 
+# just confirming these values represent the percentage of composition 
+
+# now remove that column that we added
+glass_ID <- glass_ID[,-12]
+
+
+# want to convert glass_type to factor because it is the classifying column
+glass_ID$glass_type <- as.factor(glass_ID$glass_type)
+```
+
+3. Create a histogram of the Na column and overlay a normal curve; visually determine whether the data is normally distributed. You may use the code from this tutorial. Does the k-NN algorithm require normally distributed data or is it a non-parametric method? Comment on your findings. 
+
+```{r}
+# creating a histogram with more bins, to get a better sense of the shape of the data
+x <- glass_ID$Na
+h <- hist(x, breaks = 10, col = "red",
+          xlab="Sodium Measurement", main="Histogram with Normal Curve")
+
+# Add a Normal Curve
+xfit<-seq(min(x),max(x),length=40) 
+yfit<-dnorm(xfit,mean=mean(x),sd=sd(x)) 
+yfit <- yfit*diff(h$mids[1:2])*length(x) 
+lines(xfit, yfit, col="blue", lwd = 2)
+```
+
+The data appears to be normally distributed. The kNN algorithm does not make any assumptions on the distribution of data. It is a non-parametric method, because it does not estimate coefficients to set a specific line or shape to the data in the mapping function (as is the case with linear regression). Instead, the kNN algorithm does not assume anything about the form of the mapping function (i.e. it being linear), but only assumes that observations that are close have a similar output variable (Brownlee, Jason (2016). Parametric and Nonparametric Machine Learning Algorithms. Retrieved from https://machinelearningmastery.com/parametric-and-nonparametric-machine-learning-algorithms/).
+
+
+4. After removing the ID column (column 1), normalize the first two columns in the data set using min-max normalization.
+
+```{r}
+# remove the Id column
+glass_ID <- glass_ID[,-1]
+
+# create a min/max normalize function to be applied
+normalize_minmax <- function(x) {
+  return((x-min(x))/ (max(x)-min(x))) }
+
+# apply the function to the first two columns now, 
+# first copy all of the data into a new dataframe
+glass_ID_normalized <- glass_ID
+
+glass_ID_normalized[,1:2] <- lapply(glass_ID_normalized[,1:2], normalize_minmax)
+
+# check to make sure it worked
+summary(glass_ID_normalized$RI)
+summary(glass_ID_normalized$Na)
+
+head(glass_ID_normalized)
+
+# everything looks good, they appear to be normalized now
+
+```
+
+
+5. Normalize the remaining columns, except the last one, using z-score standardization. The last column is the glass type and so it is excluded.
+
+```{r}
+# create a z-score normalize function to be applied
+normalize_z <- function(x) {
+  return((x-mean(x))/ (sd(x))) }
+
+# apply the function to columns 3 through 9
+glass_ID_normalized[,3:9] <- lapply(glass_ID_normalized[,3:9], normalize_z)
+
+
+# check summary of a few columns
+summary(glass_ID_normalized$Mg)
+summary(glass_ID_normalized$Si)
+summary(glass_ID_normalized$Ca)
+
+# the ranges are unbounded now but the results look reasonable 
+# based on the distributions we looked at in the original data in part 2
+
+# looks good, they appear normalized
+```
+
+
+6. The data set is sorted, so creating a validation data set requires random selection of elements. Create a stratified sample where you randomly select 50% of each of the cases for each glass type to be part of the validation data set. The remaining cases will form the training data set.
+
+```{r}
+# look at counts per glass type
+glass_ID_normalized%>%
+  group_by(glass_type) %>%
+  summarise(count = n())
+
+# first add an ID column back to the data so we can identify 
+# records not included in the validation set to include in the training set
+
+glass_ID_normalized <- mutate(glass_ID_normalized, id = 1:214)
+
+# will use the sample_frac function to take random samples from each glass type
+# setting up a loop for this 
+
+validation_data = data.frame()
+set.seed(110)
+
+for (i in 1:7) {
+  sample_glass <- sample_frac(filter(glass_ID_normalized, 
+                     glass_type == i), size = .5, replace = FALSE)
+  validation_data <- rbind(validation_data,sample_glass)
+  rownames(validation_data) <- NULL
+  }
+
+# check the counts per glass type to verify half of each type was taken
+validation_data%>%
+  group_by(glass_type) %>%
+  summarise(count = n())
+
+# looks great
+
+
+# now take all records not in the validation data set and put in training data set
+training_data <-  subset(glass_ID_normalized, !(id %in% validation_data$id))
+rownames(training_data) <- NULL
+
+# creating labels of the actual glass_type for each dataset
+training_labels <- training_data[,10]
+validation_labels <- validation_data[,10]
+
+
+# removing the id column we added to the full dataset and training/test sets
+glass_ID_normalized <- glass_ID_normalized[,-11]
+training_data <- training_data[,-11]
+validation_data <- validation_data[,-11]
+
+```
+
+
+7. Implement the k-NN algorithm in R (do not use an implementation of k-NN from a package) and use your algorithm with a k=10 to predict the glass type for the following two cases:. Use the whole normalized data set for this; not just the training data set. Note that you need to normalize the values of the new cases the same way as you normalized the original data.
+RI = 1.51621 | 12.53 | 3.48 | 1.39 | 73.39 | 0.60 | 8.55 | 0.00 | Fe = 0.05
+RI = 1.5098 | 12.77 | 1.85 | 1.81 | 72.69 | 0.59 | 10.01 | 0.00 | Fe = 0.01
+
+```{r}
+# create vectors of the new cases, adding a 10th NA value at the end for
+# the glass_type column so we can append this data to the full data set
+x <- c(1.51621, 12.53, 3.48, 1.39, 73.39, 0.60, 8.55, 0.00, 0.05, NA)
+y <- c(1.5098, 12.77, 1.85, 1.81, 72.69, 0.59, 10.01, 0.00, 0.01, NA)
+
+# now want to normalize the new numbers
+
+# after checking the parameters of the original data against the new data,
+# the first value in the second new vector is lower than the minimum parameter, 
+# which was used to normalize. Will need to update the parameters 
+# to re-normalize with the new data included 
+
+# this is the range of the original data...
+summary(glass_ID[1])
+# you can see the minimum (1.511) is higher than one of 
+# the new values being introduced (1.5098)
+
+
+# to update the parameters and re-normalize, will add the new vectors to the original data,
+# then re-normalize all columns to update the parameters, using the same methods as before
+
+# creating a new data set with the new data included
+glass_ID_normalized2 <-  rbind(glass_ID, x, y)
+
+# use the normalize_minmax function to transform the first two columns 
+glass_ID_normalized2[,1:2] <- lapply(glass_ID_normalized2[,1:2], normalize_minmax)
+
+# check to make sure it worked
+summary(glass_ID_normalized2$RI)
+summary(glass_ID_normalized2$Na)
+
+# looks good!
+
+# now normalize columns 3 - 9 with the normalize_z function
+glass_ID_normalized2[,3:9] <- lapply(glass_ID_normalized2[,3:9], normalize_z)
+
+
+# check range of a few columns
+summary(glass_ID_normalized2$Mg)
+summary(glass_ID_normalized2$Si)
+summary(glass_ID_normalized2$Ca)
+
+# looks good, the new data is now normalized and parameters are updated
+
+# separate the 2 new cases from the data set and remove
+new_cases_normalized <- glass_ID_normalized2[215:216,1:9]
+
+# create full renormalized dataset 
+glass_ID_normalized3 <- glass_ID_normalized2[1:214,]
+
+
+# Now want to create a function to implement the kNN algorithm
+
+# I will first create a distance function to calculate the euclidean distance
+# between two vectors, p and q
+
+dist <- function(p,q)
+{
+  d <- 0
+  for (i in 1:length(p)) {
+    d <- d + (p[i] - q[i])^2
+  }
+  dist <- sqrt(d)
+} 
+
+# testing the distance function on the first row of the full data and the first new case 
+p <- glass_ID_normalized3[1,1:9]
+q <- new_cases_normalized[1,]
+
+w <- dist(p,q)
+w
+# 2.4941
+
+# now do the manual calculation to see if the function is working properly
+sqrt(((p[1]-q[1])^2) + ((p[2]-q[2])^2) + ((p[3]-q[3])^2) + 
+  ((p[4]-q[4])^2) + ((p[5]-q[5])^2) + ((p[6]-q[6])^2) + 
+  ((p[7]-q[7])^2) + ((p[8]-q[8])^2) + ((p[9]-q[9])^2))
+# 2.4941, it matches what the dist function gave us
+
+
+# now I will create a function to calculate the distances for all rows in the training data
+
+all_dist <- function(training, unknown) 
+{
+  m <- nrow(training)
+  ds <- numeric(m)
+  q <- unknown
+  for (i in 1:m) {
+    p <- training[i,]
+    ds[i] <- dist(p,q)
+  }
+  all_dist <- ds
+}
+
+# check to see if the function works with the first new case
+n <- all_dist(glass_ID_normalized3[,1:9],new_cases_normalized[1,])
+
+n
+# it works
+
+# now identify the k nearest neighbors
+nearest_neighbors <- function(neighbors,k)
+{
+  ordered_neighbors <- order(neighbors)
+  nearest_neighbors <- ordered_neighbors[1:k]
+}
+
+f <- nearest_neighbors(n,10)
+f
+
+# now we can classify the glass_type by taking the most frequent type from the nearest neighbors
+# create a Mode function to find the most frequent element
+Mode <- function(x)
+{
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x,ux)))]
+}
+
+# testing the function
+Mode(glass_ID_normalized3$glass_type)
+
+# checking the counts by glass_type from data to verify
+glass_ID_normalized3 %>%
+  group_by(glass_type) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# yes, type "2" is the most frequent
+
+# going back to the results from the nearest_neighbors function, 
+# and identifying those glass_types from the training data
+glass_ID_normalized3$glass_type[f]
+
+# now using the Mode funtion, we classify the first new case
+Mode(glass_ID_normalized3$glass_type[f])
+# it is glass_type 1
+
+# Now I will create a knn algorithm using all of this
+knn_created <- function(training, unknown, k)
+{
+  nb <- all_dist(training[,names(training) != "glass_type"], unknown)
+  f <- nearest_neighbors(nb,k)
+  knn_created <- Mode(training$glass_type[f])
+}
+
+# now predicting the glass type for both new cases with my algorithm
+# first new case
+nn1 <- knn_created(glass_ID_normalized3, new_cases_normalized[1,], 10)
+nn1
+# it is glass_type 1
+
+# second new case
+nn2 <- knn_created(glass_ID_normalized3, new_cases_normalized[2,], 10)
+nn2
+# it is glass_type 6
+```
+
+I created a kNN algorithm and predicted that the first new case is a glass_type 1 with a k=10. I predicted the second new case to be glass_type 6 with a k = 10. For this prediction, I re-normalized the entire set of data to update the parameters with the two new cases included. I did this because after checking the parameters of the original data against the new data, the first value in the second new case is lower than the minimum parameter, which was used to normalize.
+
+
+8. Apply the knn function from the class package with k=14 and redo the cases from Question (7).
+
+```{r}
+library(class)
+
+# applying the knn function with k = 14
+glass_type_pred <- knn(train = glass_ID_normalized3[,1:9], 
+                       test = new_cases_normalized, 
+                       cl=glass_ID_normalized3[,10], k = 14)
+
+glass_type_pred
+```
+
+The prediction is the same as in question 7 (glass_types 1 and 6)
+
+
+9. Determine the accuracy of the knn function with k=14 from the class package by applying it against each case in the validation data set. What is the percentage of correct classifications?
+
+```{r}
+# Using the training and validation data sets created in question 6, 
+# I will predict a glass_type for all records in the validation data set 
+# I want to exclude the last column from each of these data sets because that is
+# the actual glass_type, which is the field we want to predict
+set.seed(110)
+glass_ID_validation_pred <- knn(train = training_data[,1:9], 
+                                test = validation_data[,1:9], 
+                                cl = training_labels, k= 14)
+
+glass_ID_validation_pred
+
+# now want to compare to the actual glass_types (validation_labels) to test accuracy
+validation_labels
+
+sum(glass_ID_validation_pred == validation_labels)/length(validation_labels)
+# 0.5904762
+```
+
+I used the training dataset created in question 6 to predict the glass_type for each record in the validation dataset. I then calculated the percent of correct classifications to be 59%.
+
+
+10. Determine an optimal k by trying all values from 5 through 14 for your own k-NN algorithm implementation against the cases in the validation data set. What is the optimal k, i.e., the k that results in the best accuracy? Plot k versus accuracy.
+
+```{r}
+# using my knn algorithm (knn_created) for each k value from 5 - 14 
+# and saving the number of correct predictions for each of those tests
+
+# I want to create an updated function to calculate the prediction for 
+# every record in the validation set and create a vector of those predictions
+# because the original "knn_created" function just predicts 1 record
+
+knn_created_full <- function(training, validation, k) 
+{
+  m <- nrow(validation)
+  knns <- numeric(m)
+  for (i in 1:m) {
+    unknown <- validation[i,]
+    knns[i] <- knn_created(training, unknown, k)
+  }
+  knn_created_full <- knns
+}
+
+
+# now loop the k values through this function, 
+# and calculate the number of accurate predictions for each k
+
+# create a data frame for the results
+knn_accuracy <- data.frame(k = c(5,6,7,8,9,10,11,12,13,14),
+                           correct_predictions = c(0,0,0,0,0,0,0,0,0,0))
+
+# run the loop
+for (i in 5:14) {
+  k_i <- knn_created_full(training_data, validation_data[,1:9], i)
+  knn_accuracy[(i-4),2] <- sum(k_i == validation_labels)
+}
+
+# look at results
+knn_accuracy
+
+# great, now plot the accuracy by k
+# add a column calculating percentage accurate
+knn_accuracy <- mutate(knn_accuracy, 
+                       accuracy = round((correct_predictions/105)*100,2))
+
+plot(x= knn_accuracy$k, y = knn_accuracy$accuracy,
+     main = "kNN Accuracy", xlab = "k", ylab = "Accuracy Percentage")
+```
+
+From the results, you can see that the optimal k for my kNN algorithm implemented against the cases in the validation data set is k = 12. It predicts 53 out of 105 cases accurately, which equals 50.5% accuracy.
+
+
+11. Create a plot of k (x-axis) versus error rate (percentage of incorrect classifications) using ggplot.
+
+```{r}
+# add an "incorrect" count and percentage to the knn_accuracy dataframe I created
+knn_accuracy <- mutate(knn_accuracy, incorrect_perc = 100 - accuracy)
+
+knn_accuracy
+
+ggplot(knn_accuracy, aes(x = k, y = incorrect_perc)) +
+  geom_line() + 
+  geom_point() +
+  scale_x_continuous(breaks = c(5,6,7,8,9,10,11,12,13,14)) +
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+  labs(title = "kNN Accuracy", x = "k", y = "Error Rate (%)")
+```
+
+Again, this shows us that k = 12 gives us the lowest error rate and is the optimal k.
+
+
+12. Produce a cross-table confusion matrix showing the accuracy of the classification using a package of your choice and a k of your choice.
+
+```{r}
+# Using the training and validation data sets created in question 6, 
+# using the class package, and using k = 12 because that was determined
+# to be optimal from question 10 with the algorithm that I created 
+
+set.seed(299)
+new_glass_pred <- knn(train = training_data[,1:9], 
+                      test = validation_data[,1:9], 
+                      cl = training_labels, k= 12)
+
+new_glass_pred
+
+# now compare the results to the vector of actual glass_types 
+# with confusion matrix
+library(caret)
+
+confusionMatrix(new_glass_pred, as.factor(validation_labels))
+```
+
+The confusion matrix shows the overall accuracy to be 60%. The accuracy for each individual glass_type prediction can be seen in the confusion matrix with the percentages shown in the Sensitivity row at the bottom.
+
+
+13. Comment on the run-time complexity of the k-NN for classifying w new cases using a training data set of n cases having m features. Assume that m is "large". How does this algorithm behave as w, n, and m increase? Would this algorithm be "fast" if the training data set and the number of features are large?
+
+After building a kNN algorithm myself, I can see how the different elements affect the processing and the run time. As the number of features (m) increases, the calculation of the distances takes longer beacuse it has more elements to cycle through for each pair of cases that it is comparing. As the number of cases in the training data set (n) increases, the calculation of the distances takes longer again and the processing that follows also takes a little longer because there are more cases to cycle through when identifying the nearest neighbors, the classification category, and the most common from the list of nearest neighbors. This does not add much time to the overall run time though. I found that with my algorithm, the addition of new cases to be classified (w) was the element that slowed the process down the most. As w increases, the entire distance calculation has to be repeated again as the algorithm cycles through all of the new cases in the validation data set that are being predicted. When initially using my algorithm to predict one new case, it ran quickly. When I used my algorithm to predict a glass_type for all 105 new cases in the validation data set, it had to run that same process that was ran for the one new case 105 different times, while adding each prediction to a vector of predictions. So, I found that increasing w, n, and m all add more processing, but the run time is affected the most by increasing w. The algorithm would not be "fast" if the training data set and number of features were large, because that adds more processing within the algorithm as opposed to smaller training data and features. 
+
+
+
+
+
+
+PROBLEM 2:
+
+
+1. Investigate this data set of home prices in King County (USA). How many cases are there? How many features? Imagine you are a real estate broker and are advising home sellers on how much their home is worth. Research and think about how you might use kNN to forecast (predict) the likely sales price for a home? Build a forecasting model with kNN and then forecast the price of some home (you can determine its features and you may build the algorithm yourself or use a package such as caret). 
+```{r}
+# load the data
+homes <- read_csv("C:/Users/gridl/Documents/NEU/Classes/machine_learning/week_5/kc_house_data.csv")
+
+#explore
+head(homes)
+
+str(homes)
+```
+
+There are 21,613 cases in the data set, with 20 features (excluding the id column). If I were to advise a client on how much their home was worth using kNN to forecast the sales price, I would categorize all of the home prices in this data set into bins (ranges of sales price), which would be the category I would predict (because we want to predict the likely sales price). Then I would use kNN to find the best price bin classification based on the features of the home. Below, I will build a forecasting model using kNN:
+
+```{r}
+# first look at the 'price' feature to determine bins to create 
+summary(homes$price)
+# I want a better idea of the range
+
+# look at the distribution
+ggplot(homes, aes(x=price)) +
+  geom_density(fill='lightblue') +
+  scale_x_continuous(labels = scales::comma)
+
+# this shows us it's skewed a bit, with a lot of high outliers
+
+# I want to exclude these outliers because they might impact predictions
+# I'll add a z-score column to calculate the z-score for each home price
+
+homes_2 <- mutate(homes, zscore = ((price-mean(price))/sd(price)))
+
+# now see if any are more than 3 std deviations from the mean
+filter(homes_2, zscore>3 | zscore<(-3))
+# yes, there are 406 ouliers, all high outliers
+
+# want to remove these so they don't hurt the predictions by impacting
+# the normalization
+homes_2 <- filter(homes_2, zscore<3)
+
+
+
+# I will create a "price bin" variable, and bin the data by price, 
+# in intervals of $50,000
+
+homes_bins <- homes_2 %>%
+  mutate(price_bin = ifelse(price < 250000, "< 250k", 
+               ifelse(price >= 250000 & price < 300000, "250-300k", 
+               ifelse(price >= 300000 & price < 350000, "300-350k", 
+               ifelse(price >= 350000 & price < 400000, "350-400k", 
+               ifelse(price >= 400000 & price < 450000, "400-450k", 
+               ifelse(price >= 450000 & price < 500000, "450-500k", 
+               ifelse(price >= 500000 & price < 550000, "500-550k", 
+               ifelse(price >= 550000 & price < 600000, "550-600k", 
+               ifelse(price >= 600000 & price < 650000, "600-650k", 
+               ifelse(price >= 650000 & price < 700000, "650k-700k", 
+               ifelse(price >= 700000 & price < 750000, "700-750k", 
+                      "> 750k"))))))))))))
+
+# confirm it worked by looking at price 
+# and the new "price_bin" category I just created 
+
+head(homes_bins[,c("price","price_bin")], 10)
+# looks good!
+
+# now look at the counts per bin
+homes_bins %>%
+  group_by(price_bin) %>%
+  summarise(count = n())
+
+# looks like a good distribution
+
+# first remove the id and zscore columns and move price to the end 
+# of data next to category, since this feature is not being used 
+# in the kNN function
+homes_bins <- select(homes_bins, c(2,4:21,23,3))
+
+# want to transform the date column to numeric
+# so that the normalize function will work
+homes_bins$date <- as.numeric(homes_bins$date, units = "days")
+
+# now will normalize the feature columns, using the min/max method, 
+# with the "normalize_minmax" function I created earlier
+homes_bins_norm <- homes_bins
+
+homes_bins_norm[,1:19] <- lapply(homes_bins_norm[,1:19], normalize_minmax)
+
+# check to make sure it worked
+summary(homes_bins_norm$bedrooms)
+summary(homes_bins_norm$sqft_living)
+
+head(homes_bins_norm)
+# everything looks good, they appear to be normalized now
+
+
+# now I will create a new case to predict the sales price_bin
+# looking at the ranges for each feature to come up with realistic values
+#summary(homes_bins)
+
+client_home <- data.frame(date = c(1432000000), bedrooms = c(2), 
+                          bathrooms = c(2), sqft_living = c(1200), 
+                          sqft_lot = c(5000), floors = c(2), waterfront = c(0),
+                          view = c(0), condition = c(2), grade = c(2), 
+                          sqft_above = c(1200), sqft_basement = c(0), 
+                          yr_built = c(1950), yr_renovated = c(0), 
+                          zipcode = c(98078), lat = c(47.68), long = c(-122.3), 
+                          sqft_living15 = c(1540), sqft_lot15 = c(8768))
+
+
+# now normalize each new feature in the new data based on original parameters
+# need to create a new function for this that will 
+# normalize new cases based on old parameters
+
+newminmax <- function(yy,zz) 
+{
+  return((yy-min(zz))/ (max(zz)-min(zz)))
+}
+
+# now create another new function to run this newminmax function 
+# for every column in the client_home data to give us the 
+# normalized values in the same data frame format
+
+normalize_new_home <- function(new_case,old_params) 
+{
+  m <- length(new_case)
+  nc <- data.frame(matrix(NA, nrow = 1, ncol = m))
+  colnames(nc) <- colnames(new_case)
+  for (i in 1:m) {
+    yy <- new_case[i]
+    zz <- old_params[,i]
+     nc[i] <- newminmax(yy,zz)
+  }
+  normalize_new_home <- nc
+}
+
+
+# now run the function to normalize the new client home features 
+# based on the old parameters used for the original normalization
+
+client_home_norm <- normalize_new_home(client_home, homes_bins)
+
+client_home_norm
+# looks good!
+
+
+
+# now we can run kNN algorithm to classify this new case
+
+# I will use the knn function from the class package again
+
+# applying the knn function with k = 14 to the normalized data to 
+# classify the new case
+home_labels <- as.factor(homes_bins_norm$price_bin)
+  
+client_home_pred <- knn(train = homes_bins_norm[,1:19], 
+                        test = client_home_norm, 
+                        cl=home_labels, k = 14)
+
+client_home_pred
+```
+
+The kNN function (with k=14) from the 'class' package predicts the new client's home to fall within the $550,000 - $600,000 price bin, based on the features of the home.
+
+
+2. How would you evaluate the model? While you need to only describe how to evaluate the model, you may calculate an actual metric.
+
+To evaluate the model, I would split the full normalized data set (homes_bins_norm) into separate training and validation data sets. I would then run the knn function on the validation data set, predicting the "price_bin" for each record based on the classifications and features in the training data set. I would then compare each of those predicted "price_bin"'s to the actual value to calculate the accuracy of the model. I could create a confusion matrix to look at the overall accuracy and the accuracy for each category. I would do this for different k values and compare the accuracy of each model to determine the optimal k value.
+
+
+
+
+
+
+PROBLEM 3: Inspect the data set of occupancy rates for a series of time periods. Which forecasting method is most appropriate to use for forecast the next time period? Calculate a forecast for the next time period with a 95% prediction interval. Comment on the bias of your forecasting model.
+
+```{r}
+# load the data
+occupancy <- read_csv("C:/Users/gridl/Documents/NEU/Classes/machine_learning/week_5/occupancyratestimeseries.csv")
+
+#explore
+head(occupancy)
+
+str(occupancy)
+
+summary(occupancy$OccupancyRate)
+
+# plot it over time to see if there's a trend
+ggplot(occupancy, aes(x=Period, y=OccupancyRate)) +
+  geom_line()
+```
+
+You can see that the data goes up and down repeatedly and there is a cyclical pattern over time, as it goes up and down in cycles over time. There isn't much of a trend in the cycles (where you could fit a line to it) so I would use the moving average method to forecast the next period. 
+
+I will calculate a forecast and error for each time period in the dataset, because I will need that in order to determine the 95% prediction interval. The prediction interval takes into account the standard deviation of the forecast distribution. The 95% prediction interval is +/- 1.96 standard deviations of the forecast (Prediction Intervals. Retrieved from https://otexts.org/fpp2/prediction-intervals.html).
+
+Below, I will calculate the forecast for the next time period with a 95% prediction interval:
+
+```{r}
+# Calculating the moving average forecast 
+# I will calculate a 3-period moving average
+
+# add forecast and error columns
+occupancy_MovAvg <- occupancy %>%
+  mutate(forecast = c(0), error = c(0))
+
+# cannot forecast first three periods because we don't have 
+# previous three periods of data
+
+# build function
+for (i in 4:nrow(occupancy_MovAvg)){
+  occupancy_MovAvg$forecast[i] <- 
+    mean(occupancy_MovAvg$OccupancyRate[(i-3):(i-1)])
+  occupancy_MovAvg$error[i] <- 
+    occupancy_MovAvg$OccupancyRate[i] - occupancy_MovAvg$forecast[i]
+}
+
+occupancy_MovAvg
+# looks good
+
+
+# calculate the standard deviation of the forecast distribution, excluding first 3
+sdf <- sd(occupancy_MovAvg$forecast[4:166])
+
+# calculating the forecast of the next time period
+n <- nrow(occupancy_MovAvg)
+
+last3 <- occupancy_MovAvg[n:(n-2),2]
+
+occupancy_MovAvg_forecast_167 <- mean(last3$OccupancyRate)
+occupancy_MovAvg_forecast_167
+# forecast for the next time period = 31.7
+
+# with 95% prediction interval
+occupancy_MovAvg_forecast_167 - sdf
+occupancy_MovAvg_forecast_167 + sdf
+# 25.2 - 38.2
+
+# looking into bias
+# I want to count how many cases have a forecast above and a below the 
+# actual occupancy rate value
+sum(occupancy_MovAvg$error > 0)
+# 96
+
+sum(occupancy_MovAvg$error < 0)
+# 67
+
+# There is a positive bias
+97/163
+# 59.5 % of the forecasts were above the actual value
+```
+
+The 3-period moving average forecast for the next time period's occupancy rate is 31.7. With a 95% prediction interval, the forecast is that forecast point +/- 1.96 standard deviations of the forecast distribution. The standard deviation of the forecast distribution is  6.5, so the forecast range with a 95% prediction interval is 25.2 - 38.2.
+
+I used the errors during each time step to calculate how many forecasts were above the actual occupancy rate and how many were below to address the bias of the model. 59.5% of the forecasts were above the actual value. From this, I determined that the model is biased, predicting more forecasts to be generally higher than they should be.
+
+
