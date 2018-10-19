@@ -1,0 +1,673 @@
+---
+title: "Brian Gridley - AirBnb Research"
+output: html_notebook
+---
+
+STORYLINE... 
+
+HOW IS AIRBNB IMPACTING LOCAL REAL ESTATE MARKETS? 
+
+tell the story of how there is a lot of drama surrounding Airbnb in high demand real estate markets bc it's taking away housing stock from residents and turning them into investment units. There's the sentiment that large investors are buying units in bulk to use as airbnb homes for investment income, which is taking away from the housing stock in the city and reducing the number of residential units available for rent/purchase. Causing local government to consider regulations on usage... setting a limit to the allowed rental time and not allowing rentals of entire home .. or add taxes similar to hotels
+
+Want to look into the dynamics of the market to see if this is primarily the case or if it seems to be more that owners are using their homes as sources of additional income for when they are away.
+
+STORY TO TELL:
+You can see how many total homes are being rented out and how ...tell story of how it's mainly full homes, and in desirable locations, signifying use for investment 
+You can see the length of stay... signifies the service is mainly being used for temporary stays and not for replacement service to find long term rentals... and calendar availability shows these homes are widely being made available throughout the year and not just on a few weekends here and there when homeowners are away and want to rent their home out... signifies units being used exclusively for Airbnb...
+You can see the price per full home offers a much better investment potential than longer-term traditional leases, which   encourages this disruption in the rental stock.... also show price per person per month, very similar to rental mkt
+You can see the number of hosts with multiple listings, signifying a larger problem in the market, where investors are purchasing units exclusively for this purpose and taking homes out of the market for residential use...
+Wordcloud of sentiments?
+
+
+
+ OVERVIEW OF THE AIRBNB MARKET
+
+- DONE map of all listings by type of listing... for use in 1... include chart below showing total overview stats, count, price
+
+- DONE chart of entire home vs just room vs shared room/couch ... 
+- DONE line chart of price by month
+- DONE chart of minimum stay... use bins (1-3 days, 4-7, 8-15, 15+)... *** 
+- DONE now do a maximum stay chart to see if that minimum stay is misleading... maybe a better indicator of the properties availability.
+- do a count by host. indicator that large investors are buying properties just for airbnb investment
+
+** tell story from this... looks like x% ofhomeowners are renting full home, using airbnb as a tool to utilize their home as an investment,
+ x% of hosts are looking for extra cash renting couch/ sharing room... more of an additional income opportunity for owners... 
+
+
+INVESTMENT OUTLOOK FOR OWNERS?
+
+- DONE chart of median price per neighborhood per month compared to zillow  ... to show which option is more profitable 
+- DONE percentage of time vacant vs filled... try to calculate number of days each listing is vacant vs filled
+
+
+**is it a good decision to use airbnb vs just standard rentals?
+
+
+HOW DO HOSTS PORTRAY THEIR NEIGHBORHOOD?
+
+- DONE word cloud of titles and descriptions  
+
+HOW DO VISITORS FEEL ABOUT THE NEIGHBORHOOD?
+
+- some sort of ratings analysis... review scores location
+- DONE count of reviews to see which are most popular (has most number of stays)
+- DONE word cloud of reviews
+
+
+
+```{r}
+# load packages
+library(tidyverse)
+library(sf)
+library(tigris)
+library(viridis)
+
+getwd()
+
+# import files
+
+Bosnbhds <- sf::read_sf("C:/Users/gridl/Documents/NEU/Classes/Data_vz/City_in_Time/BPDA_data/Boston_Neighborhoods.geojson")
+
+# the filtered listing file... won't use this
+listings <- read_csv("listings.csv")
+
+# all raw listing data
+rawlistings <- read_csv("listings_raw.csv")
+
+
+# use this code for exporting images
+
+#jpeg('Alllistings.jpg')
+#Alllistings
+#dev.off()
+
+
+```
+
+
+
+```{r}
+# map of all listings
+
+map1 <-ggplot(Bosnbhds) +
+  geom_sf() +
+  geom_point(data = rawlistings, 
+             aes(x = longitude, y = latitude, color = room_type), size = .8) + 
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        legend.key = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18)) +
+  guides(color = guide_legend(override.aes = list(size=3), title = "Listing Type")) +
+  labs(title = "All Listings") 
+
+jpeg('map1.jpg')
+map1
+dev.off()
+
+# you can see the majority of entire home listings in the higher end neighborhoods...downtown core, back bay/south end... with more private rooms clustered further out... notice a general pattern, with listings clustering around the orange line and red line corridors... most sites are in the most "desirable" areas of city that attract visitors (and along transit lines to have easy access to tourist areas)... helps to support the idea that these ar ebeing used as short-term hotel-type options 
+```
+
+
+```{r}
+# chart of room type ... need to manipulate the data to change ones with couch or futon to shared room
+
+# first remove "$" from price column
+rawlistings$price <- as.numeric(gsub("\\$", "", rawlistings$price))
+
+# count by room type
+rawlistings %>%
+  group_by(room_type) %>%
+  summarise(count = n(), avg_price = round(mean(price, na.rm = TRUE),2), avg_accom = round(mean(accommodates),2)) %>%
+  arrange(desc(count)) 
+
+# noticed some listings list it as private room but the bed is listed as "couch" or "futon"
+# want to re-categorize them
+
+rawlistings %>%
+  group_by(room_type, bed_type) %>%
+  summarise(count = n(), accom = mean(accommodates)) 
+
+14+8+2105+30+3+33+10+1302+10+7+4+13+46
+  
+rawlistings$room_type[rawlistings$bed_type == "Futon"] <- "Shared room"
+rawlistings$room_type[rawlistings$bed_type == "Pull-out Sofa"] <- "Shared room"
+rawlistings$room_type[rawlistings$bed_type == "Airbed"] <- "Shared room"
+rawlistings$room_type[rawlistings$bed_type == "Couch"] <- "Shared room"
+rawlistings$room_type[rawlistings$bed_type == "Couch"] <- "Shared room"
+
+rawlistings %>%
+  group_by(room_type, bed_type) %>%
+  summarise(count = n(), accom = mean(accommodates))
+
+2105+1302+40+10+51+31+46
+
+rawlistings %>%
+  group_by(room_type) %>%
+  summarise(count = n(), avg_price = round(mean(price, na.rm = TRUE),2), 
+            avg_accom = round(mean(accommodates, na.rm = TRUE),1), 
+            price_per_person = round((avg_price/avg_accom),2)) %>%
+  arrange(desc(count)) 
+
+# pie chart
+piechart <- tibble(variable = c("Entire home/apt","Private room","Shared room/couch"), value = c(2105,1302,178))
+
+with(piechart,pie(value, labels = element_blank(), radius=1, col = c("tomato","mediumseagreen", "royalblue1")))
+
+jpeg('piechart.jpg')
+with(piechart,pie(value, labels = element_blank(), radius=1, col = c("tomato","mediumseagreen", "royalblue1")))
+dev.off()
+
+# you would think that people renting just a room or shard room are doing it for additional income on the side, while renting the entire home signifies using the home as an investment tool
+
+```
+
+```{r}
+# which areas are most popular? judged by # user reviews
+
+popularitymap <- ggplot(Bosnbhds) +
+  geom_sf() +
+  geom_point(data = rawlistings, 
+             aes(x = longitude, y = latitude, alpha = number_of_reviews), 
+             color = "navy", size = .8) + 
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        legend.key = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18)) +
+  guides(alpha = guide_legend(override.aes = list(size=3), title = "Total Reviews")) +
+  labs(title = "Popularity of Listings") 
+
+
+jpeg('popularity_map.jpg')
+popularitymap
+dev.off()
+```
+
+
+```{r}
+# line chart of price by month for all listings... will need to bring in calendar file for this
+
+# first creat a column of price per bed to normalize it
+rawlistings <- mutate(rawlistings, price_per_bed = round(price / beds, 2))
+
+rawlistings %>%
+  select(price,beds,price_per_bed)
+
+rawlistings
+
+# import calendar data
+calendar <- read_csv("calendar_raw.csv")
+
+# remove "$" from price column
+calendar$price <- as.numeric(gsub("\\$", "", calendar$price))
+
+
+calendar_price <- calendar %>%
+  filter(available == "t")
+
+calendar_price <- mutate(calendar_price, month = substring(date, 6,7))
+
+# bring in beds column to calculate per bed
+# first rename id column for easy  join
+colnames(rawlistings)[1] <- "listing_id"
+
+calendarmerge <- merge(x = calendar_price, y = rawlistings[ , c("listing_id", "beds")], by = "listing_id")
+
+# calculate price per bed
+calendarmerge <- mutate(calendarmerge, price_per_bed = round(price / beds, 2))
+
+timeline <- calendarmerge %>%
+  group_by(month) %>%
+  summarise(median_price = round(median(price_per_bed, na.rm = TRUE),2))
+
+timeline$month <- c("January","February","March","April","May","June","July","August","September","October","November","December")
+
+timeline
+
+# chart it
+chart1 <- ggplot(timeline, aes(x = month, y = median_price, group = 1)) + 
+      geom_line(stat = "identity",  color = "tomato", size = 1.5) +
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.key = element_blank(),
+        axis.text.x = element_text(angle = 55, hjust = 1)) +
+    scale_y_continuous(limits = c(90,130),  labels = scales::dollar) +
+    scale_x_discrete(limits=c("January","February","March","April","May","June","July","August","September","October","November","December")) +
+ggtitle("Median Daily Price per Bed") +
+xlab("") +
+ylab("")
+
+
+
+jpeg('chart1.jpg')
+chart1
+dev.off()
+
+
+# the price spikes in September/October... which signifies higher demand at this time. Does this mean that more people are visiting Boston short-term during the fall (New England's most desirable season for visitors), or does it tie to the long-term rental market, when the majority of year-long leases turnover in September? The story could go either way
+
+# one way to explain this might be that the extreme level of lease turnover in the city in these months might cause higher demand for temporary beds because of a gap of when you leve your old place and move into new place == higher demand for "in-between" period 
+```
+
+```{r}
+# chart of minimum stay... signifies use
+# use bins (1-3 days, 4-7, 8-15, 15+)
+
+rawlistings <- mutate(rawlistings, bin = ifelse(minimum_nights == 1 | minimum_nights == 2 | minimum_nights == 3,c("1-3"),ifelse(minimum_nights > 3 & minimum_nights < 8, c("4-7"),ifelse(minimum_nights > 7 & minimum_nights < 16, c("8-15"), c(">15")))))
+
+bins <- rawlistings %>%
+  group_by(bin) %>%
+  summarise(count = n()) %>%
+  arrange(bin)
+
+#barchart
+chart2 <- ggplot(bins, aes(x = bin, y = count)) +
+  geom_bar(stat = "identity", fill = "tomato", width = .4) +
+  scale_y_continuous(limits = c(0,4000), labels = scales::comma) + 
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+   scale_x_discrete(limits=c("1-3","4-7","8-15",">15")) +
+  ggtitle("Minimum Stay Required per Listing") +
+  xlab("Days") +
+  ylab("# of Listings")
+
+
+jpeg('chart2.jpg')
+chart2
+dev.off()
+
+# this is a telling chart. It shows that the vast majority of hosts are using their home as a short-term rental option... signifies not looking for monthly tenants or year-long leases... so it shows us that Boston hosts are not using Airbnb for long-term rental purposes... so homes are being used as alternatives to hotels... so housing units that would otherwise be available for living quarters are being taken off the market, reducing available housing options for Boston residents, and potentially contirbuting to the high rental costs across the city...
+
+# need to tie this to the vacancy charts to see how many days of the year the units are being offered... are hosts renting their homes out year-round or just on certain weekends when they are out of town?
+```
+
+```{r}
+# maximum stay potential... signifies overall availability of unit
+
+rawlistings <- mutate(rawlistings, maxbin = ifelse(maximum_nights == 1 | maximum_nights == 2 | maximum_nights == 3,c("1-3"),ifelse(maximum_nights > 3 & maximum_nights < 8, c("4-7"),ifelse(maximum_nights > 7 & maximum_nights < 16, c("8-15"), ifelse(maximum_nights > 15 & maximum_nights < 31, c("16-30"), c(">30"))))))
+
+maxbins <- rawlistings %>%
+  group_by(maxbin) %>%
+  summarise(count = n()) %>%
+  arrange(maxbin)
+
+#barchart
+chart3 <- ggplot(maxbins, aes(x = maxbin, y = count)) +
+  geom_bar(stat = "identity", fill = "royalblue1", width = .4) +
+  scale_y_continuous(limits = c(0,4000), labels = scales::comma) + 
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+   scale_x_discrete(limits=c("1-3","4-7","8-15","16-30",">30")) +
+  ggtitle("Maximum Allowable Stay per Listing") +
+  xlab("Days") +
+  ylab("# of Listings")
+
+
+jpeg('chart3.jpg')
+chart3
+dev.off()
+
+```
+
+```{r}
+# days listed as available per listing 
+calendar %>%
+  group_by(listing_id) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# discard listing id 12898806
+
+availability <- calendar %>%
+  filter(listing_id != "12898806") %>%
+  group_by(listing_id, available) %>%
+  summarise(count = n())
+
+
+# spread it out for tidy format
+availability <- spread(availability, key = available, value = count)
+
+# set NA to 0 
+availability$f[is.na(availability$f)] <- 0
+
+availability$t[is.na(availability$t)] <- 0
+
+# add column
+availability <- mutate(availability, Availability_percentage = round(((t/(t+f))*100),0))
+
+# create column for bins of availability
+availability <- mutate(availability, bin = ifelse(Availability_percentage < 10,c("< 10%"),ifelse(Availability_percentage > 10 & Availability_percentage < 26, c("10-25%"),ifelse(Availability_percentage > 25 & Availability_percentage < 51, c("26-50%"), ifelse(Availability_percentage > 50 & Availability_percentage < 76, c("51-75%"), c("76-100%"))))))
+
+availability_grouped <- availability %>%
+  group_by(bin) %>%
+  summarise(count = n())
+
+# chart it
+chart4 <- ggplot(availability_grouped, aes(x = bin, y = count)) +
+  geom_bar(stat = "identity", fill = "mediumseagreen", width = .4) +
+  scale_y_continuous(limits = c(0,1500), labels = scales::comma) + 
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+   scale_x_discrete(limits=c("< 10%","10-25%","26-50%","51-75%","76-100%")) +
+  ggtitle("Airbnb Usage - % of Days per Year") +
+  xlab("Percentage") +
+  ylab("# of Listings")
+
+
+
+jpeg('chart4.jpg')
+chart4
+dev.off()
+```
+
+
+
+```{r}
+# map of price per bed per neighborhood
+
+
+# calculate price per person
+
+
+# create a table of median price / bedroom / neighborhood
+
+nhood_prices <- rawlistings %>%
+  group_by(neighbourhood) %>%
+  summarise(median_price = median(price_per_person, na.rm = TRUE))
+
+# alter neighborhood names to match geojson 
+arrange(nhood_prices, neighbourhood)
+
+Bosnbhds
+
+nhood_prices$neighbourhood[nhood_prices$neighbourhood == "Allston-Brighton"] <- "Allston"
+nhood_prices[nrow(nhood_prices) + 1,] = list("Brighton",40.0)
+nhood_prices$neighbourhood[nhood_prices$neighbourhood == "Fenway/Kenmore"] <- "Fenway"
+nhood_prices[nrow(nhood_prices) + 1,] = list("South Boston Waterfront",60.0)
+
+
+# Now add this data to geojson for mapping
+Bosnbhds$MedianPrice <- c(38.50,40.25,44.50,0.00,0.00,84.50,60.84,60.00,43.75,72.50,74.75,40.00,63.75,56.33,77.50,60.21,63.80,40.00,32.50,33.62,39.84,36.00,60.00,60.00,40.00,0.00)
+
+# map it
+map2 <- ggplot(Bosnbhds, aes(fill = MedianPrice)) + 
+  geom_sf() + 
+    scale_fill_gradientn(colors = c("gray","white","tomato", "maroon")) +
+      theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18),
+        legend.key = element_blank()) +
+  labs(title = "Median Daily Price per Person Accommodated",
+       fill = "USD ($)")
+
+
+jpeg('map2.jpg')
+map2
+dev.off()
+```
+
+```{r}
+# compare monthly investment options... per bedroom per month
+
+# update entries with 0 bedrooms to be 1
+rawlistings$bedrooms[is.na(rawlistings$bedrooms)] <- 1
+
+rawlistings$bedrooms[rawlistings$bedrooms == 0] <- 1
+
+# add column to calculate price per bedoom per month
+rawlistings <- mutate(rawlistings, price_bedroom_month = round(((price/bedrooms)*30),0))
+
+
+# median per neighborhood.. only look at entire home rentals to isolate investment price potential
+nhood_prices_bedroom <- rawlistings %>%
+  filter(room_type == "Entire home/apt") %>%
+  group_by(neighbourhood) %>%
+  summarise(median_price = median(price_bedroom_month, na.rm = TRUE))
+
+# alter neighborhood names to match geojson 
+arrange(nhood_prices_bedroom, neighbourhood)
+
+Bosnbhds
+
+nhood_prices_bedroom$neighbourhood[nhood_prices_bedroom$neighbourhood == "Allston-Brighton"] <- "Allston"
+nhood_prices_bedroom[nrow(nhood_prices_bedroom) + 1,] = list("Brighton",3000.0)
+nhood_prices_bedroom$neighbourhood[nhood_prices_bedroom$neighbourhood == "Fenway/Kenmore"] <- "Fenway"
+nhood_prices_bedroom[nrow(nhood_prices_bedroom) + 1,] = list("South Boston Waterfront",4500.0)
+
+# add calculation assuming national average vacancy rate of hotels for 2016 - 34% vacancy
+nhood_prices_bedroom <- mutate(nhood_prices_bedroom, median_price_w_vacancy = round((median_price * .66),0))
+
+
+# import zillow median rents 
+zillow <- read_csv("Neighborhood_MedianRentalPrice_1Bedroom.csv")
+
+zillow <- filter(zillow, State == "MA" & City == "Boston")
+
+zillow <- select(zillow, c("RegionName","2017-01","2017-02","2017-03","2017-04","2017-05","2017-06","2017-07","2017-08","2017-09","2017-10","2017-11","2017-12"))
+
+arrange(zillow, RegionName)
+
+# clean up names a bit
+zillow <- filter(zillow, RegionName != "Kenmore")
+
+zillow$RegionName[zillow$RegionName == "South Dorchester"] <- "Dorchester"
+
+# calculate avg monthly rent for full year
+zillowgather <- zillow %>%
+  gather('2017-01','2017-02','2017-03','2017-04','2017-05','2017-06','2017-07','2017-08','2017-09','2017-10','2017-11','2017-12', key = month, value = rent)
+
+zillowsummary <- zillowgather %>%
+  group_by(RegionName) %>%
+  summarise(avg_rent_yr = round(mean(rent),0))
+
+# now join zillow data to airbnb 
+pricecomp <- merge(x = zillowsummary, y = nhood_prices_bedroom, by.x = "RegionName", by.y = "neighbourhood", all.x = TRUE)
+
+colnames(pricecomp) <- c("Neighborhood","zillow","airbnb_no_vac","airbnb_vac")
+
+# calculate difference
+pricecomp <- mutate(pricecomp, Airbnb_Advantage = airbnb_vac-zillow)
+
+pricecomp <- mutate(pricecomp, comp_type = ifelse(pricecomp$Airbnb_Advantage > 0, "Advantage", "Disadvantage"))
+
+#want to order the bars to match prices barchart
+pricecomp <- pricecomp[order(pricecomp$airbnb_vac), ]  # sort
+
+pricecomp$Neighborhood <- factor(pricecomp$Neighborhood, levels = pricecomp$Neighborhood)  # convert to factor to retain sorted order in plot.
+
+# Diverging Barcharts
+outlook <- ggplot(pricecomp, aes(x=Neighborhood, y=Airbnb_Advantage, label=Airbnb_Advantage)) + 
+  geom_bar(stat='identity', aes(fill=comp_type), width=.5)  +
+  scale_fill_manual(name="", 
+                    labels = c("Advantage", "Disadvantage"), 
+                    values = c("Advantage" = "mediumseagreen", "Disadvantage" = "tomato")) + 
+  scale_y_continuous(labels = scales::dollar) +
+  ggtitle(subtitle="Compared to Traditional Rental Market", 
+       label = "Airbnb Investment Outlook per Bedroom") +
+  theme(legend.position = "bottom",
+        axis.text.y = element_blank()) +
+  ylab("") + 
+  xlab("") +
+  coord_flip()
+
+
+jpeg('outlook.jpg')
+outlook
+dev.off()
+```
+
+
+```{r}
+
+prices <- 
+  ggplot(pricecomp, aes(x= reorder(Neighborhood, airbnb_vac), y=airbnb_vac)) + 
+  geom_bar(stat='identity', width=.5, fill = "royalblue1")  + 
+  scale_y_continuous(labels = scales::dollar) +
+  coord_flip() +
+  ggtitle(label = "Median Monthly Airbnb Income per Bedroom",
+          subtitle = "Daily Prices Extrapolated to Monthly Income - 
+          Assuming 34% Vacancy Rate") +
+  xlab("") +
+  ylab("")
+
+
+jpeg('prices.jpg')
+prices
+dev.off()
+```
+
+
+```{r}
+#map prices
+# 
+ggplot(Bosnbhds) +
+  geom_sf() +
+  geom_point(data = rawlistings, 
+             aes(x = longitude, y = latitude, color = price), size = 1) + 
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(size=18)) +
+  labs(title = "Price per Listing per Day")
+
+rawlistings %>%
+  select(listing_id,price,price_per_person,price_per_bed) %>%
+  arrange(desc(price_per_bed))
+
+
+
+listings %>%
+  group_by(room_type, neighbourhood) %>%
+  summarise(count = n())
+
+
+
+summary2 <- spread(summary, key = room_type, value = count)
+
+
+ggplot(data=summary, aes(x =neighbourhood, y = n, fill= neighborhood)) +
+    geom_bar(data = filter(parking_by_yr, neighborhood == "Roxbury"), stat="identity", position = position_nudge(x= -0.15)) + 
+    geom_bar(data = filter(parking_by_yr, neighborhood == "South End"), stat="identity", position = position_nudge(x= +0.15))
+
+
+
+```
+
+```{r}
+# ratings
+
+mean(rawlistings$review_scores_rating, na.rm = TRUE)
+
+mean(rawlistings$review_scores_value, na.rm = TRUE)
+
+mean(rawlistings$review_scores_location, na.rm = TRUE)
+
+
+reviews <- tibble(variable = c("Overall Rating","Value","Location"), value = c(91.9,91.7,94.1))
+
+
+
+reviews$variable <- factor(reviews$variable)
+reviews$variable <- factor(reviews$variable, levels = c("Overall Rating", "Value", "Location"))
+
+reviewplot <-
+  ggplot(data = reviews, aes(x = variable, y = value))+
+     geom_bar(stat="identity",  width=.4, aes(fill= factor(value))) +
+      scale_y_continuous(limits = c(0,100)) +
+     scale_fill_manual(values = c("mediumseagreen", "royalblue1", "mediumseagreen")) +
+  theme(axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank(),
+        legend.key = element_blank()) +
+  ggtitle(label = "Average User Review") +
+  coord_flip()
+
+
+jpeg('reviewplot.jpg')
+reviewplot
+dev.off()
+```
+
+
+```{r}
+# wordcloud of reviews
+library(mallet)
+
+
+review_text <- read_csv("reviews_raw.csv")
+
+review_text <- select(review_text,comments)
+
+
+# initiate topic model trainer, with n topics (this value can be tweaked based on result)
+n <- 25
+topic.model <- MalletLDA(num.topics=n) 
+
+## Load document corpus. We could also pass in the filename of a saved instance list file that we build from the command-line tools.
+mallet.instances <- mallet.import(id.array = row.names(review_text), text.array = as.character(review_text$comments), stoplist.file = "stop_311.txt", token.regexp = "\\p{L}[\\p{L}\\p{P}]+\\p{L}")
+topic.model$loadDocuments(mallet.instances)
+
+## Get the vocabulary, and some statistics about word frequencies.
+##  These may be useful in further curating the stopword list.
+vocabulary <- topic.model$getVocabulary()
+word.freqs <- mallet.word.freqs(topic.model)
+word.freqs$term.freq.n <- word.freqs$term.freq/sum(word.freqs$term.freq)
+word.freqs$doc.freq.n <- word.freqs$doc.freq/sum(word.freqs$doc.freq)
+
+# now train the topic models with 200 iterations
+topic.model$train(500)
+
+## run through a few iterations where we pick the best topic for each token
+topic.model$maximize(10)
+
+## Get the probability of topics in documents and the probability of words in topics.
+## By default, these functions return raw word counts. Here we want probabilities,
+## so we normalize, and add "smoothing" so that nothing has exactly 0 probability.
+doc.topics <- mallet.doc.topics(topic.model, smoothed=T, normalized=T)
+topic.words <- mallet.topic.words(topic.model, smoothed=T, normalized=T)
+
+## create a top word list
+top.words <- data.frame()
+for (i in 1:nrow(topic.words)) {
+  tmp <- mallet.top.words(topic.model, topic.words[i,], num.top.words = 10)
+  tmp$topic <- i
+  top.words <- rbind( top.words, tmp)
+}
+rm(i);rm(tmp)
+
+#visualize word clouds
+library(wordcloud)
+pal <- brewer.pal(4,"Reds")
+
+# plot each recognized topic as a wordcloud
+# use back buttons to browse (or uncomment save command to save as pdf)
+for (i in 1: n) {
+  tmp <- top.words[top.words$topic==i,]
+  wordcloud(tmp$words,freq = tmp$weights,random.order=FALSE, rot.per = 0,colors= pal, scale = c(3,1))
+  text(x=0.5, y=0.1, paste("Reviews"))
+  #quartz.save(paste("out/",i,".pdf", sep = ""), type = "pdf")#, width = 5, height = 4)
+}
+
+```
+
+
