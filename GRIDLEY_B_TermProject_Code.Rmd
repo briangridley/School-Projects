@@ -1,0 +1,1033 @@
+---
+title: "DA 5020 - Term Project"
+author: "Brian Gridley"
+date: "Spring Semester - 2018"
+output: pdf_document
+---
+
+```{r message=TRUE, warning=FALSE, paged.print=FALSE}
+# Load Packages 
+library(tidyverse)
+library(tidycensus)
+
+# load my API key, this is needed to pull data from the census. 
+# I requested an API key here: http://api.census.gov/data/key_signup.html
+
+census_api_key("xxx")
+
+```
+
+IDENTIFY THE DATA TO BE COLLECTED:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# looking into all of the variables to identify which to bring into my database
+# Decided to use the 2015 ACS 5 year survey (American Community Survey) data,
+# because it is the most recent available data, rather than the 2010 decennial census
+# it is much more recent and more useful for studies
+
+sf1 <- tidycensus::load_variables(2015, dataset = "acs5")
+# View(sf1)
+
+# note that the acs data are estimates for population totals 
+# based on surveys of a small percentage of the population
+```
+
+
+COLLECTING DATA:
+EXTRACTING/CLEANING/ORGANIZING DATA BY VARIABLE
+
+I used the code below to extract the data related to the first variable and ensure that the code worked propery. I then created functions in the code to follow, to make the process more efficient and reduce the chance of manual error.
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# Sex... 
+
+# This is the expression that extracts the data from api
+
+sex <- get_acs(state = 25, county = 25, geography = "tract", year = 2015, 
+        geometry = FALSE, survey = "acs5", output = "tidy",
+        variables = c("B01001_002","B01001_026"))
+
+
+# join to sf1 by variable to pull in names of variables, 
+# which will be used as the column names
+
+# first create a new column that can be used for the join  
+# with the proper codings format
+sex <- mutate(sex, name = paste(variable,"E", sep = ""))
+
+sex <- merge(x = sex, y = sf1[ ,c("name","label")], by = "name", all.x = TRUE)
+
+# clean up names for column headings
+sex$label <- gsub(":","",sex$label)
+
+
+# pull the census tract codings to a separate table for final database 
+# (this only needs to be done once)
+census_tracts <- sex %>%
+  distinct(GEOID, NAME)
+
+# pull the variable codings to separate table for final database
+sf1_variables <- sex %>%
+  distinct(variable, label)
+
+# get rid of unnecessary columns... 
+sex <- sex %>%
+  select(GEOID,label, estimate)
+
+# organize in tidy format
+sex <- spread(sex, key = label, value = estimate)
+
+```
+
+I created functions below, to speed the process up, since there is such a large number of separate tables that I am creating.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Population...
+
+# replicate process above for each variable of interest
+# create functions along the way to make the process easier
+
+#extracting from api
+get_tract_data <- function(VAR) {
+      get_acs(state = 25, county = 25, geography = "tract", year = 2015, 
+              geometry = FALSE, survey = "acs5", output = "tidy",
+              variables = VAR)
+}
+
+# execute function
+population <- get_tract_data("B01003_001")
+
+
+# pull in names of variables and merge... create function
+bring_names <- function(TABLE) {
+       TABLE <- mutate(TABLE, name = paste(variable,"E", sep = ""))
+       
+       merge(x = TABLE, y = sf1[ ,c("name","label")], by = "name", all.x = TRUE)
+}
+
+
+# execute function
+population <- bring_names(population)
+
+# clean up names for column headings... need to add wording to make it more descriptive
+population$label <- gsub("Total","Total_Population",population$label)
+
+
+# add the variable codings to the sf1_variables table... create function
+add_to_sf1 <- function(TABLE) {
+      rbind(sf1_variables, distinct(TABLE, variable, label))
+}
+
+# execute
+sf1_variables <- add_to_sf1(population)
+
+# get rid of unnecessary columns...  create function
+reduce_columns <- function(TABLE) {
+      TABLE %>%
+          select(GEOID,label, estimate)
+}
+
+# execute 
+population <- reduce_columns(population)
+
+# organize in tidy format... create function
+tidy_it <- function(TABLE) {
+  spread(TABLE, key = label, value = estimate)
+}
+
+population <- tidy_it(population)
+```
+
+Now I will utilize the functions for the creation of the remaining tables. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Race...
+
+#extracting from api
+race <- get_tract_data(c("B02001_002","B02001_003","B02001_004","B02001_005",
+                         "B02001_006","B02001_007","B02001_008"))
+
+
+# pull in names of variables and merge... 
+race <- bring_names(race)
+
+# clean up names for column headings... get rid of spaces and get rid of "alone"
+race$label <- gsub(" alone","",race$label)
+
+race$label <- gsub(" ","_",race$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(race)
+
+# get rid of unnecessary columns...  
+race <- reduce_columns(race)
+
+# organize in tidy format... 
+race <- tidy_it(race)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Citizenship
+
+#extracting from api
+citizenship <- get_tract_data(c("B05001_002","B05001_003","B05001_004",
+                                "B05001_005","B05001_006"))
+
+
+# pull in names of variables and merge... 
+citizenship <- bring_names(citizenship)
+
+# clean up names for column headings...
+citizenship$label <- gsub("[.(),]","",citizenship$label)
+
+citizenship$label <- gsub(" ","_",citizenship$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(citizenship)
+
+# get rid of unnecessary columns...  
+citizenship <- reduce_columns(citizenship)
+
+# organize in tidy format... 
+citizenship <- tidy_it(citizenship)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Nativity
+
+#extracting from api
+nativity <- get_tract_data(c("B05012_002","B05012_003"))
+
+
+# pull in names of variables and merge... 
+nativity <- bring_names(nativity)
+
+# clean up names for column headings...
+nativity$label <- gsub("-","",nativity$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(nativity)
+
+# get rid of unnecessary columns...  
+nativity <- reduce_columns(nativity)
+
+# organize in tidy format... 
+nativity <- tidy_it(nativity)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Marital status
+
+#extracting from api
+marriage <- get_tract_data(c("B06008_002","B06008_003","B06008_004",
+                             "B06008_005","B06008_006"))
+
+
+# pull in names of variables and merge... 
+marriage <- bring_names(marriage)
+
+# clean up names for column headings...
+marriage$label <- gsub("Now married, except separated",
+                       "Married",marriage$label)
+
+marriage$label <- gsub(" m","_M",marriage$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(marriage)
+
+# get rid of unnecessary columns...  
+marriage <- reduce_columns(marriage)
+
+# organize in tidy format... 
+marriage <- tidy_it(marriage)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Educational Attainment
+
+#extracting from api
+education <- get_tract_data(c("B06009_002","B06009_003","B06009_004",
+                              "B06009_005","B06009_006"))
+
+
+# pull in names of variables and merge... 
+education <- bring_names(education)
+
+# clean up names for column headings...
+education$label <- gsub("includes equivalency","",education$label)
+
+education$label <- gsub("['()]","",education$label)
+
+education$label <- gsub(" ","_",education$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(education)
+
+# get rid of unnecessary columns...  
+education <- reduce_columns(education)
+
+# organize in tidy format... 
+education <- tidy_it(education)
+
+# order the columns appropriately
+education <- education %>%
+  select(1,5,4,6,2,3)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Income levels
+
+#extracting from api
+income <- get_tract_data(c("B19001_002","B19001_003","B19001_004",
+                           "B19001_005","B19001_006","B19001_007",
+                           "B19001_008","B19001_009","B19001_010",
+                           "B19001_011","B19001_012","B19001_013",
+                           "B19001_014","B19001_015","B19001_016", 
+                           "B19001_017"))
+
+
+# pull in names of variables and merge... 
+income <- bring_names(income)
+
+# clean up names for column headings...
+
+income$label <- gsub("[$,]","",income$label)
+
+income$label <- gsub(" ","_",income$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(income)
+
+# get rid of unnecessary columns...  
+income <- reduce_columns(income)
+
+# organize in tidy format... 
+income <- tidy_it(income)
+
+# order the columns appropriately 
+income <- income %>%
+  select(1,17,2,5,7,9,10,11,12,13,14,15,16,3,4,6,8)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Median Income
+
+#extracting from api
+median_income <- get_tract_data(c("B19013_001"))
+
+
+# pull in names of variables and merge... 
+median_income <- bring_names(median_income)
+
+# clean up names for column headings...
+median_income$label <- c("Median_Household_Income")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(median_income)
+
+# get rid of unnecessary columns...  
+median_income <- reduce_columns(median_income)
+
+# organize in tidy format... 
+median_income <- tidy_it(median_income)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Median Age
+
+# extracting from api
+median_age <- get_tract_data(c("B01002_001"))
+
+
+# pull in names of variables and merge... 
+median_age <- bring_names(median_age)
+
+# clean up names for column headings...
+median_age$label <- c("Median_Age")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(median_age)
+
+# get rid of unnecessary columns...  
+median_age <- reduce_columns(median_age)
+
+# organize in tidy format... 
+median_age <- tidy_it(median_age)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Means of transportation to work
+
+# extracting from api
+commute_method <- get_tract_data(c("B08301_002","B08301_010",
+                                   "B08301_016","B08301_017",
+                                   "B08301_018","B08301_019",
+                                   "B08301_020"))
+
+
+# pull in names of variables and merge... 
+commute_method <- bring_names(commute_method)
+
+# clean up names for column headings...
+commute_method$label <- gsub("[.(),:]","",commute_method$label)
+
+commute_method$label <- gsub(" ","_",commute_method$label)
+
+commute_method$label <- gsub("Public_transportation_excluding_taxicab",
+                             "Public_transportation",commute_method$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(commute_method)
+
+# get rid of unnecessary columns...  
+commute_method <- reduce_columns(commute_method)
+
+# organize in tidy format... 
+commute_method <- tidy_it(commute_method)
+```
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Commute Time
+
+# extracting from api
+commute_time <- get_tract_data(c("B08303_002","B08303_003","B08303_004",
+                                 "B08303_005","B08303_006","B08303_007",
+                                 "B08303_008","B08303_009","B08303_010",
+                                 "B08303_011","B08303_012","B08303_013"))
+
+# pull in names of variables and merge... 
+commute_time <- bring_names(commute_time)
+
+# clean up names for column headings...
+commute_time$label <- gsub(" ","_",commute_time$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(commute_time)
+
+# get rid of unnecessary columns...  
+commute_time <- reduce_columns(commute_time)
+
+# organize in tidy format... 
+commute_time <- tidy_it(commute_time)
+
+# re-order columns
+commute_time <- commute_time %>%
+  select(1,13,10,2,3,4,5,6,7,8,9,11,12)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Occupation
+
+# extracting from api
+occupation <- get_tract_data(c("B08124_002","B08124_003","B08124_004",
+                               "B08124_005","B08124_006","B08124_007"))
+
+# pull in names of variables and merge... 
+occupation <- bring_names(occupation)
+
+# clean up names for column headings...
+occupation$label <- gsub("[.(),:]","",occupation$label)
+
+occupation$label <- gsub(" ","_",occupation$label)
+
+occupation$label <- gsub("_occupations","",occupation$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(occupation)
+
+# get rid of unnecessary columns...  
+occupation <- reduce_columns(occupation)
+
+# organize in tidy format... 
+occupation <- tidy_it(occupation)
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Industry
+
+# extracting from api
+industry <- get_tract_data(c("B08126_002","B08126_003","B08126_004",
+                             "B08126_005","B08126_006","B08126_007",
+                             "B08126_008","B08126_009","B08126_010",
+                             "B08126_011","B08126_012","B08126_013",
+                             "B08126_014","B08126_015"))
+
+# pull in names of variables and merge... 
+industry <- bring_names(industry)
+
+# clean up names for column headings...
+industry$label <- gsub("[.(),:]","",industry$label)
+
+industry$label <- gsub(" ","_",industry$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(industry)
+
+# get rid of unnecessary columns...  
+industry <- reduce_columns(industry)
+
+# organize in tidy format... 
+industry <- tidy_it(industry)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Household Size
+
+# extracting from api
+household_size <- get_tract_data(c("B08201_007","B08201_013",
+                                   "B08201_019","B08201_025"))
+
+# pull in names of variables and merge... 
+household_size <- bring_names(household_size)
+
+# clean up names for column headings...
+household_size$label <- gsub("[.(),:]","",household_size$label)
+
+household_size$label <- gsub("[ -]","_",household_size$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(household_size)
+
+# get rid of unnecessary columns...  
+household_size <- reduce_columns(household_size)
+
+# organize in tidy format... 
+household_size <- tidy_it(household_size)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# School Enrollment
+
+# extracting from api
+enrollment <- get_tract_data(c("B14007_002","B14007_019"))
+
+# pull in names of variables and merge... 
+enrollment <- bring_names(enrollment)
+
+# clean up names for column headings...
+enrollment$label <- gsub("[.(),:]","",enrollment$label)
+
+enrollment$label <- gsub(" ","_",enrollment$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(enrollment)
+
+# get rid of unnecessary columns...  
+enrollment <- reduce_columns(enrollment)
+
+# organize in tidy format... 
+enrollment <- tidy_it(enrollment)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Income Inequality
+
+# extracting from api
+inequality <- get_tract_data(c("B19083_001"))
+
+# pull in names of variables and merge... 
+inequality <- bring_names(inequality)
+
+# clean up names for column headings...
+inequality$label <- gsub(" ","_",inequality$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(inequality)
+
+# get rid of unnecessary columns...  
+inequality <- reduce_columns(inequality)
+
+# organize in tidy format... 
+inequality <- tidy_it(inequality)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Housing Units
+
+# extracting from api
+housing <- get_tract_data(c("B25001_001"))
+
+# pull in names of variables and merge... 
+housing <- bring_names(housing)
+
+# clean up names for column headings...
+housing$label <- c("Housing_Units")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(housing)
+
+# get rid of unnecessary columns...  
+housing <- reduce_columns(housing)
+
+# organize in tidy format... 
+housing <- tidy_it(housing)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Occupancy
+
+# extracting from api
+occupancy <- get_tract_data(c("B25002_002","B25002_003"))
+
+# pull in names of variables and merge... 
+occupancy <- bring_names(occupancy)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(occupancy)
+
+# get rid of unnecessary columns...  
+occupancy <- reduce_columns(occupancy)
+
+# organize in tidy format... 
+occupancy <- tidy_it(occupancy)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Tenure
+
+# extracting from api
+tenure <- get_tract_data(c("B25003_002","B25003_003"))
+
+# pull in names of variables and merge... 
+tenure <- bring_names(tenure)
+
+# clean up names for column headings...
+tenure$label <- gsub(" ","_",tenure$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(tenure)
+
+# get rid of unnecessary columns...  
+tenure <- reduce_columns(tenure)
+
+# organize in tidy format... 
+tenure <- tidy_it(tenure)
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Household Race
+
+# extracting from api
+household_race <- get_tract_data(c("B25006_002","B25006_003",
+                                   "B25006_004","B25006_005",
+                                   "B25006_006","B25006_007",
+                                   "B25006_008"))
+
+# pull in names of variables and merge... 
+household_race <- bring_names(household_race)
+
+# clean up names for column headings...
+household_race$label <- gsub("[.(),:]","",household_race$label)
+
+household_race$label <- gsub(" ","_",household_race$label)
+
+household_race$label <- gsub("_who_is","",household_race$label)
+
+household_race$label <- gsub("_alone","",household_race$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(household_race)
+
+# get rid of unnecessary columns...  
+household_race <- reduce_columns(household_race)
+
+# organize in tidy format... 
+household_race <- tidy_it(household_race)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Units in structure
+
+# extracting from api
+units_in_structure <- get_tract_data(c("B25024_002","B25024_003",
+                                       "B25024_004","B25024_005",
+                                       "B25024_006","B25024_007",
+                                       "B25024_008","B25024_009",
+                                       "B25024_010","B25024_011"))
+
+# pull in names of variables and merge... 
+units_in_structure <- bring_names(units_in_structure)
+
+# clean up names for column headings...
+units_in_structure$label <- gsub("[.(),:]","",units_in_structure$label)
+
+units_in_structure$label <- gsub(" ","_",units_in_structure$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(units_in_structure)
+
+# get rid of unnecessary columns...  
+units_in_structure <- reduce_columns(units_in_structure)
+
+# organize in tidy format... 
+units_in_structure <- tidy_it(units_in_structure)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Mortgage status
+
+# extracting from api
+mortgage_status <- get_tract_data(c("B25027_002","B25027_010"))
+
+# pull in names of variables and merge... 
+mortgage_status <- bring_names(mortgage_status)
+
+# clean up names for column headings...
+mortgage_status$label <- gsub("[.(),:]","",mortgage_status$label)
+
+mortgage_status$label <- gsub(" ","_",mortgage_status$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(mortgage_status)
+
+# get rid of unnecessary columns...  
+mortgage_status <- reduce_columns(mortgage_status)
+
+# organize in tidy format... 
+mortgage_status <- tidy_it(mortgage_status)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Median Gross Rent
+
+# extracting from api
+median_rent <- get_tract_data(c("B25064_001"))
+
+# pull in names of variables and merge... 
+median_rent <- bring_names(median_rent)
+
+# clean up names for column headings...
+median_rent$label <- c("Median_Rent")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(median_rent)
+
+# get rid of unnecessary columns...  
+median_rent <- reduce_columns(median_rent)
+
+# organize in tidy format... 
+median_rent <- tidy_it(median_rent)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Median Year Built
+
+# extracting from api
+median_yr_built <- get_tract_data(c("B25035_001"))
+
+# pull in names of variables and merge... 
+median_yr_built <- bring_names(median_yr_built)
+
+# clean up names for column headings...
+median_yr_built$label <- c("Median_yr_Built")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(median_yr_built)
+
+# get rid of unnecessary columns...  
+median_yr_built <- reduce_columns(median_yr_built)
+
+# organize in tidy format... 
+median_yr_built <- tidy_it(median_yr_built)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Number of bedrooms
+
+# extracting from api
+bedrooms <- get_tract_data(c("B25041_002","B25041_003","B25041_004",
+                             "B25041_005","B25041_006","B25041_007"))
+
+# pull in names of variables and merge... 
+bedrooms <- bring_names(bedrooms)
+
+# clean up names for column headings...
+bedrooms$label <- gsub(" ","_",bedrooms$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(bedrooms)
+
+# get rid of unnecessary columns...  
+bedrooms <- reduce_columns(bedrooms)
+
+# organize in tidy format... 
+bedrooms <- tidy_it(bedrooms)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Heating Type
+
+# extracting from api
+heating <- get_tract_data(c("B25040_002","B25040_003","B25040_004",
+                            "B25040_005","B25040_006","B25040_007",
+                            "B25040_008","B25040_009","B25040_010"))
+
+# pull in names of variables and merge... 
+heating <- bring_names(heating)
+
+# clean up names for column headings...
+heating$label <- gsub("[.(),:]","",heating$label)
+
+heating$label <- gsub(" ","_",heating$label)
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(heating)
+
+# get rid of unnecessary columns...  
+heating <- reduce_columns(heating)
+
+# organize in tidy format... 
+heating <- tidy_it(heating)
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Median value for owner occupied house
+
+# extracting from api
+median_value <- get_tract_data(c("B25077_001"))
+
+# pull in names of variables and merge... 
+median_value <- bring_names(median_value)
+
+# clean up names for column headings...
+median_value$label <- c("Median_Value")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(median_value)
+
+# get rid of unnecessary columns...  
+median_value <- reduce_columns(median_value)
+
+# organize in tidy format... 
+median_value <- tidy_it(median_value)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Median monthly housing cost
+
+# extracting from api
+median_cost_monthly <- get_tract_data(c("B25105_001"))
+
+# pull in names of variables and merge... 
+median_cost_monthly <- bring_names(median_cost_monthly)
+
+# clean up names for column headings...
+median_cost_monthly$label <- c("Median_Cost_Monthly")
+
+# add the variable codings to the sf1_variables table... 
+sf1_variables <- add_to_sf1(median_cost_monthly)
+
+# get rid of unnecessary columns...  
+median_cost_monthly <- reduce_columns(median_cost_monthly)
+
+# organize in tidy format... 
+median_cost_monthly <- tidy_it(median_cost_monthly)
+```
+
+
+STORING DATA IN SQL DATABASE:
+
+Now that all of the tables are gathered, I will create a SQL database and input them into the database for storage. I will then be able to retrieve data from the database when needed. The GEOID field (the census tract code) is the primary and foreign key for each of the variable tables, allowing them to be connected to each other.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# SQLITE
+library(RSQLite)
+
+#create database connection
+db <- dbConnect(SQLite(), dbname="TermProject.sqlite")
+
+summary(db)
+
+
+# Enter all tables into db...
+# there are a total of 29 variable tables and 2 other tables
+
+# enter variable tables first
+dbWriteTable(conn = db, name = "sex_sql", 
+             value = sex,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "occupation_sql", 
+             value = occupation,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "population_sql", 
+             value = population,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "race_sql", 
+             value = race,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "citizenship_sql", 
+             value = citizenship,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "nativity_sql", 
+             value = nativity,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "marriage_sql", 
+             value = marriage,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "education_sql", 
+             value = education,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "income_sql", 
+             value = income,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "median_income_sql", 
+             value = median_income,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "median_age_sql", 
+             value = median_age,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "commute_method_sql", 
+             value = commute_method,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "commute_time_sql", 
+             value = commute_time,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "industry_sql", 
+             value = industry,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "household_size_sql", 
+             value = household_size,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "enrollment_sql", 
+             value = enrollment,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "inequality_sql", 
+             value = inequality,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "housing_sql", 
+             value = housing,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "occupancy_sql", 
+             value = occupancy,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "tenure_sql", 
+             value = tenure,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "household_race_sql", 
+             value = household_race,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "units_in_structure_sql", 
+             value = units_in_structure,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "mortgage_status_sql", 
+             value = mortgage_status,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "median_rent_sql", 
+             value = median_rent,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "median_yr_built_sql", 
+             value = median_yr_built,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "bedrooms_sql", 
+             value = bedrooms,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "heating_sql", 
+             value = heating,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "median_value_sql", 
+             value = median_value,
+             row.names = FALSE, header = TRUE)
+
+dbWriteTable(conn = db, name = "median_cost_monthly_sql", 
+             value = median_cost_monthly,
+             row.names = FALSE, header = TRUE)
+
+# now enter the census tract technical definition table
+dbWriteTable(conn = db, name = "census_tract_definitions", 
+             value = census_tracts,
+             row.names = FALSE, header = TRUE)
+
+# now enter the census variable code definition table
+dbWriteTable(conn = db, name = "variable_code_definitions", 
+             value = sf1_variables,
+             row.names = FALSE, header = TRUE)
+
+
+
+# check that all tables are in db.. 31 total
+dbListTables(db)
+# yes they are
+
+# check a few of the tables to make sure the data looks good
+head(dbReadTable(db, "sex_sql"))
+
+head(dbReadTable(db, "commute_method_sql"))
+
+head(dbReadTable(db, "median_value_sql"))
+
+head(dbReadTable(db, "variable_code_definitions"))
+
+head(dbReadTable(db, "census_tract_definitions"))
+
+# Yes, they look good.
+```
+
+RETRIEVING DATA:
+
+Testing a few examples of retrieving data from the database
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# what census tract has the maximum median home value? 
+
+dbGetQuery(db, "SELECT median_value_sql.GEOID, NAME, 
+                       max(Median_Value) 
+                FROM median_value_sql 
+                LEFT JOIN census_tract_definitions 
+                ON median_value_sql.GEOID = census_tract_definitions.GEOID")
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# what is the average number of men and women in Boston? 
+
+dbGetQuery(db, "SELECT avg(Male), avg(Female) FROM sex_sql")
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# what percentage of the total population in Boston takes public transportation to work?
+
+dbGetQuery(db, "SELECT sum(Public_transportation), sum(Total_Population),
+                       sum(Public_transportation)/sum(Total_Population) AS 'percentage' 
+                FROM commute_method_sql 
+                LEFT JOIN population_sql 
+                ON commute_method_sql.GEOID = population_sql.GEOID")
+```
+
+
+
+
+
