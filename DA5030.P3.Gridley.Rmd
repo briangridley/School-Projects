@@ -1,0 +1,751 @@
+---
+title: "DA5030 - Practicum 3"
+author: "Brian Gridley"
+date: "November 27, 2018"
+output: pdf_document
+---
+
+
+PROBLEM 1:
+
+1) Download the data set Bank Marketing Data Set. Note that the data file does not contain header names; you may wish to add those. The description of each column can be found in the data set explanation. Use the bank.csv data set for testing and algorithm development.
+
+```{r}
+# import the data, import as strings (not factors) because
+# will need to convert to numeric
+bank <- read.delim("C:/Users/gridl/Documents/NEU/Classes/machine_learning/week_12/bank.csv",
+                   sep = ";", header = TRUE, stringsAsFactors = FALSE) 
+
+head(bank)
+# import looks successful
+```
+
+2) Explore the data set as you see fit and that allows you to get a sense of the data and get comfortable with it. Is there distributional skew in any of the features? Is there a need to apply a transform? 
+
+```{r}
+# look at structure
+str(bank)
+# 17 variables, 7 are numeric and 10 are categorical
+
+# does not appear to be any missing values
+# double check for missing values
+sum(is.na(bank))
+# none
+
+summary(bank)
+# it looks like there is definite right-skew in some of the numeric variables
+
+# SVM requires all numeric features, so will need to convert the categorical 
+# variables into numeric variables... 
+
+
+# want to scale the numeric variables to get them closer to zero
+# for a smaller interval. Both the SVM and neural network algorithms 
+# require small intervals. Since the variables are not all normal, 
+# will scale using min/max normalization
+
+```
+
+3) Build a classification model using a support vector machine (from a package of your choice) that predicts if a bank customer will open a term deposit account.
+
+First, prepare the data
+
+```{r}
+# want to convert the categorical variables to numeric
+
+# I will do this one variable at a time, then combine them all
+# into one file
+
+# looking at each variable
+table(bank$job)
+# there are 12 levels, not ordinal, so will create 11 dummy variables
+library(tidyverse)
+
+bank_job <- bank %>%
+  select(job) %>%
+  mutate(job_admin = ifelse(job == "admin.",1,0),
+         'job_blue-collar' = ifelse(job == "blue-collar",1,0),
+         job_entrepreneur = ifelse(job == "entrepreneur",1,0),
+         job_housemaid = ifelse(job == "housemaid",1,0),
+         job_management = ifelse(job == "management",1,0),
+         job_retired = ifelse(job == "retired",1,0),
+         'job_self-employed' = ifelse(job == "self-employed",1,0),
+         job_services = ifelse(job == "services",1,0),
+         job_student = ifelse(job == "student",1,0),
+         job_technician = ifelse(job == "technician",1,0),
+         job_unemployed = ifelse(job == "unemployed",1,0))
+
+head(bank_job)
+# looks good
+
+
+# now look at the next categorical variable
+table(bank$marital)
+# 3 levels, create 2 dummy variables
+
+bank_marital <- bank %>%
+  select(marital) %>%
+  mutate(marital_single = ifelse(marital == "single",1,0),
+         marital_married = ifelse(marital == "married",1,0))
+
+head(bank_marital)
+# looks good
+
+
+# next variable
+table(bank$education)
+# will need 3 dummy variables
+
+bank_education <- bank %>%
+  select(education) %>%
+  mutate(education_primary = ifelse(education == "primary",1,0),
+        education_secondary  = ifelse(education == "secondary",1,0),
+        education_tertiary = ifelse(education == "tertiary",1,0))
+
+head(bank_education)
+# good
+
+
+# next variable
+table(bank$default)
+# binary, so just create 1 dummy
+bank_default <- bank %>%
+  select(default) %>%
+  mutate(default_yes = ifelse(default == "yes",1,0))
+       
+head(bank_default) 
+
+
+# next variable
+table(bank$housing)
+# binary, just 1 dummy
+bank_housing <- bank %>%
+  select(housing) %>%
+  mutate(housing_yes = ifelse(housing == "yes",1,0))
+       
+head(bank_housing) 
+
+
+# next variable
+table(bank$loan)
+# binary again, 1 dummy
+bank_loan <- bank %>%
+  select(loan) %>%
+  mutate(loan_yes = ifelse(loan == "yes",1,0))
+       
+head(bank_loan) 
+
+
+# next variable
+table(bank$contact)
+# 3 levels, 2 dummy
+bank_contact <- bank %>%
+  select(contact) %>%
+  mutate(contact_cellular = ifelse(contact == "cellular",1,0),
+         contact_telephone = ifelse(contact == "telephone",1,0))
+       
+head(bank_contact) 
+
+
+# next variable
+table(bank$month)
+# this is ordinal, so can create one numerical variable
+bank_month <- bank %>%
+  select(month) %>%
+  mutate(month_numeric = ifelse(month == "jan",1,
+                                ifelse(month == "feb",2,
+                                ifelse(month == "mar",3,
+                                ifelse(month == "apr",4,
+                                ifelse(month == "may",5,
+                                ifelse(month == "jun",6,
+                                ifelse(month == "jul",7,
+                                ifelse(month == "aug",8,
+                                ifelse(month == "sep",9,
+                                ifelse(month == "oct",10,
+                                ifelse(month == "nov",11,
+                                ifelse(month == "dec",12,0)))))))))))))
+       
+head(bank_month) 
+sum(bank_month$month_numeric == 0) # good, they were all given an ID
+
+
+# next variable
+table(bank$poutcome)
+# 4 variables, 3 dummy
+bank_poutcome <- bank %>%
+  select(poutcome) %>%
+  mutate(poutcome_failure = ifelse(poutcome == "failure",1,0),
+         poutcome_success = ifelse(poutcome == "success",1,0),
+         poutcome_other = ifelse(poutcome == "other",1,0))
+       
+head(bank_poutcome) 
+
+
+# next variable
+table(bank$y)
+# This is the response variable. Will want to keep this and 
+# convert to factor because we will make a yes or no prediction using the 
+# numeric predictor variables
+
+bank$y <- as.factor(bank$y)
+summary(bank$y)
+
+# now all predictor categorical variables have been converted,
+# combine them all into one file 
+
+
+bank_numeric <- cbind(bank[c(17,1,6,10,12,13,14,15)], bank_job[c(-1)],
+                      bank_marital[c(-1)], bank_education[c(-1)], bank_default[c(-1)],
+                      bank_housing[c(-1)], bank_loan[c(-1)], bank_contact[c(-1)],
+                      bank_month[c(-1)], bank_poutcome[c(-1)])
+
+# look at the data frame now
+str(bank_numeric)
+# good, it has the correct number of columns. The response variable (y) is a 
+# factor and the rest are numeric
+
+
+# now want to scale the numeric variables to get them closer to zero
+# for a smaller interval. Both the SVM and neural network algorithms 
+# require small intervals. The package for SVM automatically re-scales
+# the data, but since the neural network requires smaller scale as well,
+# I will apply min/max normalization beforehand
+
+
+# create min/max normalize function
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+  
+# normalize all numeric columns in the bank_numeric data
+# the binary variables can be included because they will not be changed in 
+# the min/max normalization 
+
+bank_norm <- as.data.frame(lapply(bank_numeric[c(2:33)], normalize))
+
+# add the response factor variable back in
+bank_norm <- cbind(bank[c("y")],bank_norm)
+
+head(bank_norm)
+# looks good
+
+# original range of numeric data
+summary(bank_numeric)
+# normalized range
+summary(bank_norm)
+# good all predictors are between 0 and 1 now
+```
+
+The data is prepared, now split it into training and testing data sets
+
+```{r}
+# will randomly split the data into training/testing with 75/25% split
+
+set.seed(250)
+bank_size <- nrow(bank_norm)
+bank_train_size <- round(bank_size * .75)
+bank_test_size <- bank_size-bank_train_size
+bank_train_index <- sample(seq(1:bank_size), bank_train_size)
+bank_train <- bank_norm[bank_train_index,]
+bank_test <- bank_norm[-bank_train_index,]
+
+```
+
+Now train and test the model
+
+```{r}
+# will use the kernlab package
+
+library(kernlab)
+
+# train the model on the training data, with the linear kernel to start
+bank_SVM <- ksvm(y ~ ., data = bank_train,
+                          kernel = "vanilladot")
+
+# look at the model object
+bank_SVM
+# the training error is 0.107933 
+
+# want to look at the accuracy of the predictions after applying the model to the
+# test set now
+
+# testing the model
+# make predictions on the test data set with the model
+bank_predictions <- predict(bank_SVM, bank_test[,2:33])
+
+# this should create a vector of the predictions for each record
+# take a look
+head(bank_predictions)
+# good
+
+# create confusion matrix, with table() function
+table(bank_predictions, bank_test$y)
+
+# calculate the number of accurate predictions
+agreement <- bank_predictions == bank_test$y
+
+table(agreement)
+# 1012 accurate predctions
+prop.table(table(agreement))
+#89.6% accuracy rate
+
+
+
+# now test a different kernel function in the model to see if it results in 
+# more accurate predictions
+
+# try the Gaussian kernel
+# train the model
+set.seed(250)
+bank_SVM_gaus <- ksvm(y ~ ., data = bank_train,
+                              kernel = "rbfdot")
+
+# now make the predictions on test data
+bank_predictions_gaus <- predict(bank_SVM_gaus, bank_test[,2:33])
+
+# calculate the accuracy
+agreement_gaus <- bank_predictions_gaus == bank_test$y
+table(agreement_gaus)
+# 1012 accurate predictions with the Gaussian kernel, which is the exact same 
+# as with the linear kernel
+
+
+# try another kernel
+# polynomial kernel
+set.seed(250)
+bank_SVM_poly <- ksvm(y ~ ., data = bank_train,
+                              kernel = "polydot")
+
+# now make the predictions on test data
+bank_predictions_poly <- predict(bank_SVM_poly, bank_test[,2:33])
+
+# calculate the accuracy
+agreement_poly <- bank_predictions_poly == bank_test$y
+table(agreement_poly)
+# 1012... again, same results
+
+
+# ANOVA RBF kernel
+set.seed(250)
+bank_SVM_anova <- ksvm(y ~ ., data = bank_train,
+                              kernel = "anovadot")
+
+# now make the predictions on test data
+bank_predictions_anova <- predict(bank_SVM_anova, bank_test[,2:33])
+
+# calculate the accuracy
+agreement_anova <- bank_predictions_anova == bank_test$y
+table(agreement_anova)
+# 1021 correct classifications
+# this kernel performed slightly better
+prop.table(table(agreement_anova))
+# 90.4% accuracy
+
+
+# Hyperbolic tangent kernel
+set.seed(250)
+bank_SVM_hyp <- ksvm(y ~ ., data = bank_train,
+                              kernel = "tanhdot")
+
+# now make the predictions on test data
+bank_predictions_hyp <- predict(bank_SVM_hyp, bank_test[,2:33])
+
+# calculate the accuracy
+agreement_hyp <- bank_predictions_hyp == bank_test$y
+table(agreement_hyp)
+# 931... this performs worse
+
+
+# Bessel kernel
+set.seed(250)
+bank_SVM_bes <- ksvm(y ~ ., data = bank_train,
+                              kernel = "besseldot")
+
+# now make the predictions on test data
+bank_predictions_bes <- predict(bank_SVM_bes, bank_test[,2:33])
+
+# calculate the accuracy
+agreement_bes <- bank_predictions_bes == bank_test$y
+table(agreement_bes)
+# 944... again, it's worse than the other kernels
+
+
+# Spline kernel
+set.seed(250)
+bank_SVM_spl <- ksvm(y ~ ., data = bank_train,
+                              kernel = "splinedot")
+
+# now make the predictions on test data
+bank_predictions_spl <- predict(bank_SVM_spl, bank_test[,2:33])
+
+# calculate the accuracy
+agreement_spl <- bank_predictions_spl == bank_test$y
+table(agreement_spl)
+# 961... worse than the others
+```
+
+The ANOVA RBF kernel performs the best in the SVM classification, predicting 1021 out of the 1130 records in the test set accurately (90.4% accuracy rate).
+
+
+4) Build another classification model using a neural network (from a package of your choice) that also predicts if a bank customer will open a term deposit account.
+
+```{r}
+# the data has already been prepared and re-scaled to a smaller scale 
+# with the min/max normalization function
+
+# it is ready to be trained and tested
+
+# using the nnet package
+library(nnet)
+
+# train model with neural network.. starting with 1 hidden node
+set.seed(250)
+bank_NN <- nnet(y ~ ., data = bank_train, size=1)
+
+# classify the test data
+bank_NN_Predictions <- predict(bank_NN, bank_test[,2:33], type="class")
+  
+# Create confusion matrix to see how many predictions were correct
+table(bank_NN_Predictions, bank_test$y)
+
+# calculate the number of accurate predictions
+agreement_NN <- bank_NN_Predictions == bank_test$y
+
+table(agreement_NN)
+# 1022 accurate predictions
+prop.table(table(agreement_NN))
+#90.4% accuracy rate
+
+# it performed very well... try with other hidden node values
+# to see if performance improves and find optimal node value
+
+
+# I will run it through a loop to output the number of accurate
+# predictions for each hidden node value from 1 to 20
+
+
+# create a data frame for the results
+bank_NN_accuracy <- data.frame(nodes = c(1,2,3,4,5,6,7,8,9,10,11,12,
+                                         13,14,15,16,17,18,19,20),
+                           correct_predictions = c(0,0,0,0,0,0,0,0,0,
+                                        0,0,0,0,0,0,0,0,0,0,0))
+
+# run the loop
+for (i in 1:20) {
+  set.seed(250)
+  bank_NN_i <- nnet(y ~ ., data = bank_train, size=i)  # train the data
+  bank_NN_Predictions_i<- predict(bank_NN_i, bank_test[,2:33], type="class") # test it
+  # calculate accurate predictions and fill in table  
+  bank_NN_accuracy[i,2] <- sum(bank_NN_Predictions_i == bank_test$y)
+}
+
+# look at results
+bank_NN_accuracy
+
+
+# great, now plot the accuracy by hidden nodes
+# add a column calculating percentage accurate
+bank_NN_accuracy <- mutate(bank_NN_accuracy, 
+                       accuracy = round((correct_predictions/1130)*100,2))
+
+# plot it
+ggplot(data = bank_NN_accuracy, aes(x=nodes, y=accuracy)) + 
+  geom_point() + 
+  geom_line() +
+  scale_x_continuous(breaks = c(1:20)) +
+  scale_y_continuous(breaks = c(84:91)) +
+  ggtitle("NN Accuracy") +
+  xlab("Hidden Nodes") + 
+  ylab("Accuracy Percentage")
+```
+
+The neural network classification performs best with 2 hidden nodes, predicting 1024 out of the 1130 records in the test set accurately (90.6% accuracy rate).
+
+
+5) Compare the accuracy of the two models based on absolute accuracy and AUC.
+
+Looking at absolute accuracy:
+```{r}
+table(bank_predictions_anova, bank_test$y)
+```
+
+
+```{r}
+# creating a cross table for both the SVM and neural network models
+# looking at the optimized models for each... 
+# the model that allows for the highest number of accurate predictions
+
+# SVM: ANOVA RBF kernel
+library(gmodels)
+CrossTable(bank_test$y, bank_predictions_anova)
+
+# Neural Network: 2 hidden nodes
+set.seed(250)
+bank_NN_2 <- nnet(y ~ ., data = bank_train, size=2)
+bank_NN_Predictions_2 <- predict(bank_NN_2, bank_test[,2:33], type="class")
+CrossTable(bank_test$y, as.factor(bank_NN_Predictions_2))
+```
+
+The Support Vector Machine model is most accurate with an ANOVA rbf kernel. Interpreting the CrossTable output, 977 cases were accurately predicted as "no" (true negatives), and 44 cases were accurately predicted as "yes" (true positives). There were 80 cases of false negatives (bank customer cases that open a term deposit account predicted as not opening one). There were 29 cases of false positives (bank customer cases that don't open an account predicted as opening an account). In total, the accuracy of the model is 90.4%, because 1021 out of the 1130 observations were accurately predicted in the test dataset.
+
+
+The Neural Network model is optimized and most accurate with 2 hidden nodes. It predicted 971 "no" cases correctly (true negatives), 52 "yes" cases correctly (true positives), had 71 false negatives, and had 35 false positives. The overall accuracy of the model is 90.6%, with 1024 accurate predictions out of the 1130 observations.
+
+In terms of overall accuracy, the Neural Network model performed better because it had a higher accuracy rate and had fewer false negatives. You want to reduce false negatives in a classification model.
+
+
+Looking at AUC:
+```{r}
+# the predictions need to be in probability format rather than factor
+# so that we can adjust the threshold for determining whether the 
+# prediction is a "yes"
+
+# SVM
+# need to re-train the model to set the parameter prob.model = TRUE to get probs
+set.seed(250)
+bank_SVM_anova_prob <- ksvm(y ~ ., data = bank_train, 
+                            kernel = "anovadot", prob.model = TRUE)
+
+bank_predictions_anova_probs <- predict(bank_SVM_anova_prob, bank_test[,2:33], 
+                                        type = "probabilities")
+
+head(bank_predictions_anova_probs)
+# put into a vector
+SVM_probs <- c(bank_predictions_anova_probs[,2])
+
+# Neural Network
+# just need to specify type = "raw" for the probabilities
+bank_NN_Predictions_2_probs <- predict(bank_NN_2, bank_test[,2:33], type = "raw")
+
+# put into vector
+NN_probs <- c(bank_NN_Predictions_2_probs)
+
+
+# good, now can calculate the AUC
+# using pROC package
+library(pROC)
+
+# AUC for SVM
+auc(bank_test$y, SVM_probs)
+# 0.8751683
+
+# AUC for Neural Network
+auc(bank_test$y, NN_probs)
+# 0.8760582
+```
+
+The Neural Network model performed better in terms of AUC as well. It has a slightly higher AUC (0.8760582) than the SVM model (0.8751683). So the Neural Network model is the better classification model for this data because it has a higher accuracy rate and AUC.
+
+
+
+PROBLEM 2:
+
+1) Download the data set Plant Disease Data Set. Note that the data file does not contain header names; you may wish to add those. The description of each column can be found in the data set explanation. This assignment must be completed within an R Markdown Notebook.
+
+```{r}
+# downloading the data from the url
+
+dataurl <- "https://archive.ics.uci.edu/ml/machine-learning-databases/plants/plants.data"
+download.file(url = dataurl, destfile = "plants.data")
+
+# now read the data in transaction format
+# as a sparse matrix, with arules package
+library(arules)
+plants <- read.transactions("plants.data", sep = ",", cols = 1)
+# Have to use "cols = 1" because the first item in each transaction is an ID
+# this identifies the first item as the transactionID and the remaining items
+# as the items in each transaction
+
+# Explore the data
+
+# view the first 5 items
+inspect(plants[1:5])
+# good, the items are separate from the ids
+
+# look at the object
+summary(plants)
+# shows summary stats, like the counts of the most common items, 
+# counts of the sizes of each transaction, and summary
+# stats of the distribution of transactions
+
+# there are 34,781 different plants in the data (transactions)
+# 70 different states/provinces (columns)
+
+
+# it is appropriate to import it in transaction format because the number of
+# states/provinces that each plant lives in varies per plant. 
+
+# top 20 states/provinces represented in all species of plants
+itemFrequencyPlot(plants, topN = 20)
+```
+
+
+2) Are there clusters in the data? Can plants be segmented into groups? Build a k-means clustering model to investigate using a package of your choice.
+
+```{r}
+# to perform this analysis, I will need to convert the data
+# into a data frame structure, with each state as a column,
+# and a binary indicator for whether the plant lives in each state or not
+
+# data needs to be numeric for k-means clustering 
+
+
+# coerce into matrix format first
+plants_matrix <- as(plants, "matrix")
+
+# look at first 5 transactions, first 10 columns
+plants_matrix[1:5,1:10]
+# good, looks like what I want, but still needs some re-formatting
+# the row names are the plant names and the column names are the states/provinces
+# and the cell values are TRUE or FALSE, which I want to convert to 0 or 1
+
+# check first 3 transactions to make sure they are correct
+plants_matrix[1:3,]
+# the first item, "abelia", is only TRUE for "fl" and "nc"
+# the second item, "abelia x grandiflora", is only TRUE for "fl" and "nc"
+# the third item, "abelmoschus", is TRUE for "ct", "dc", "fl", "hi", "il"
+# "ky", "la", "md", "mi", "ms", "nc", "pr", "sc", "va", and "vi"
+
+# check transaction data to confirm
+inspect(plants[1:3])
+# it's correct, the coercion worked properly
+
+# convert into data frame now
+plants_df <- as.data.frame(plants_matrix)
+
+head(plants_df)
+# great, now the states/provinces are each their own column, with binary
+# indicators for each plant
+
+# make the plant names a separate column rather than row name
+plants_df <- mutate(plants_df, species = row.names(plants_df))
+
+head(plants_df)
+
+
+# now convert the boolean TRUE/FALSEs to binary 0 or 1 so the data is nummeric
+
+# create a function to apply to each column
+numeric_conversion <- function(x) 
+{
+  return(as.integer(x)) 
+}
+
+
+# apply the function to each column
+plants_df[,1:70] <- lapply(plants_df[,1:70], numeric_conversion)
+
+head(plants_df)
+# looks good
+
+# reorganize the columns, bringing plant species name to the first position
+plants_df <- select(plants_df, c(71,1:70))
+
+head(plants_df)
+# great, now check the first three species again
+
+plants_df[1:3,]
+# abelia: fl, nc
+# abelia x grandiflora: fl, nc
+# abelmoschus: ct, dc, fl, hi, il, ky, la, md, mi, ms, nc, pr, sc, va, vi
+# this is correct
+
+# check if there are any NA values
+filter(plants_df, is.na(species))
+
+sum(plants_df[,2:71])
+# good, no NA values
+
+# there is no need to apply a transform because the values are all 0 or 1 so the 
+# the scale is fine and there are no imputations needed
+
+
+# the data is now properly formatted to use with kmeans
+
+
+# train a model...
+
+# will only use the state/province binary columns... ignore the ID column
+states <- plants_df[,2:71]
+
+# will use the kmeans function from the "stats" package
+
+# want to identify the appropriate number of clusters to use
+# since I don't know much about plants and can't make an educated guess about 
+# how many groups there should be, I will use the elbow-method to figure out 
+# the optimal number of groups
+
+# I will plot the within group sum of squares vs the number of clusters... to 
+# identify the elbow in the graph and the optimal number of cluster
+
+# I will run a for loop, to extract this information for different k values
+
+
+# create a data frame for the results
+cluster_analysis <- data.frame(k = c(2,3,4,5,6,7,8,9,10,11,12,
+                                         13,14,15,16,17,18,19,20),
+                           withingroupss = c(0,0,0,0,0,0,0,0,0,
+                                        0,0,0,0,0,0,0,0,0,0))
+
+# run the loop
+for (i in 2:20) {
+  set.seed(250)
+  cluster_i <- kmeans(states, i)  # train the model
+  cluster_analysis[(i-1),2] <- cluster_i[5] # input the within group ss into df
+}
+
+# look at the resulting table
+cluster_analysis
+
+# plot it to identify the elbow
+ggplot(data = cluster_analysis, aes(x=k, y=withingroupss)) + 
+  geom_point() + 
+  geom_line() +
+  scale_x_continuous(breaks = c(2:20)) +
+  scale_y_continuous(breaks = c(9000:18000)) +
+  ggtitle("Within Group Heterogeneity") +
+  xlab("Clusters") + 
+  ylab("Within Group Sum of Squares")
+ 
+# Some people might interpret where the elbow is differently, but 
+# I'll say it is at 4 because it drops off the most between 3 and 4 
+# then starts to drop less
+
+# so it looks like the optimum result will be with 4 clusters
+
+# now running the model with 4 clusters
+set.seed(250)
+plants_cluster <- kmeans(states, 4)
+
+# look at the summary
+plants_cluster
+```
+
+Yes, there are clusters in the data. The plants can be separated into groups with 4 groups being optimal. 
+
+
+3) Visualize the clusters
+
+```{r}
+# I will visualize them with the "cluster" package
+
+library(cluster)
+
+clusplot(states, plants_cluster$cluster, main = "Plant Clusters",
+         color=TRUE, shade=TRUE)
+# There are so many dimensions and so many re ords, so the full plot is 
+# messy
+
+# try a simpler visualization
+library(fpc)
+plotcluster(states, plants_cluster$cluster)
+
+
+
+```
+
+
+
+
+
+
