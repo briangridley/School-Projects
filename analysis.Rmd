@@ -1,0 +1,469 @@
+---
+title: "Untitled"
+author: "Brian Gridley"
+date: "January 22, 2018"
+output: html_document
+---
+
+
+
+```{r}
+library(jsonlite)
+
+system.time(x <- fromJSON("C:/Users/gridl/Documents/NEU/Classes/Data_vz/My_digital_shadow/Google_location_data_download/Location_History/Location_History.json"))
+```
+
+
+```{r}
+# extracting the locations dataframe
+loc = x$locations
+
+# converting time column from posix milliseconds into a readable time scale
+loc$time = as.POSIXct(as.numeric(x$locations$timestampMs)/1000, origin = "1970-01-01")
+
+# converting longitude and latitude from E7 to GPS coordinates
+loc$lat = loc$latitudeE7 / 1e7
+loc$lon = loc$longitudeE7 / 1e7
+
+head(loc)
+```
+
+
+```{r}
+# how many rows are in the data frame?
+nrow(loc)
+## 969206
+min(loc$time)
+## "2013-08-20 15:18:04 EDT"
+max(loc$time)
+## "2017-03-29 12:53:01 EDT"
+
+# calculate the number of data points per day, month and year
+library(lubridate)
+library(zoo)
+library(tidyverse)
+
+# add columns to identify date components
+loc$date <- as.Date(loc$time, '%Y/%m/%d')
+loc$year <- year(loc$date)
+loc$month_year <- as.yearmon(loc$date)
+
+# counts by day, month, year
+points_p_day <- data.frame(table(loc$date), group = "day")
+points_p_month <- data.frame(table(loc$month_year), group = "month")
+points_p_year <- data.frame(table(loc$year), group = "year")
+
+# how many days were recorded
+nrow(points_p_day)
+## 1293
+
+# how many months
+nrow(points_p_month)
+## 44
+
+# years
+nrow(points_p_year)
+## 5
+
+points_p_day %>%
+  arrange(desc(Freq))
+
+mean(points_p_day$Freq)
+# 750
+
+points_p_month %>%
+  arrange(desc(Freq))
+
+most_points_day <- loc %>%
+  filter(date == "2013-12-17")
+
+most_points_month <- loc %>%
+  filter(month_year == "Oct 2013")
+  
+most_points_day
+```
+
+
+
+
+```{r}
+# MAKE CHART SHOWING # OF DATA POINTS GOOGLE COLLECTED ABOUT ME PER DAY
+# maybe a line chart for whole time period
+points <- rbind(points_p_day[, -1], points_p_month[, -1], points_p_year[, -1])
+
+ggplot(points_p_day, aes(x = group, y = Freq)) + 
+  geom_point(position = position_jitter(width = 0.2), alpha = 0.3) + 
+  geom_boxplot(aes(color = group), size = 1, outlier.colour = NA) + 
+  facet_grid(group ~ ., scales = "free") + 
+  theme(
+    legend.position = "none",
+    strip.placement = "outside",
+    strip.background = element_blank(),
+    strip.text = element_blank(),
+    axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5)
+  ) +
+  labs(
+    x = "",
+    y = "Number of data points",
+    title = "How many data points did Google collect about me?",
+    subtitle = "Number of data points per day, month and year",
+    caption = "\nGoogle collected between 0 and 1500 data points per day
+    (median ~500), between 0 and 40,000 per month (median ~15,000) and 
+    between 80,000 and 220,000 per year (median ~140,000)."
+  )
+
+
+ggplot(data=points_p_day, aes(x =Var1, y = Freq, group=1)) +
+    geom_point(stat="identity") + geom_line() +
+    xlab("") +
+    ylab("") +
+    ggtitle("")
+
+
+points_p_day_boxplot <- mutate(points_p_day, year = substr(points_p_day$Var1,1,4))
+
+
+boxplotfinal <- 
+  ggplot(points_p_day_boxplot, aes(x=year, y=Freq)) +
+    geom_boxplot(fill='#56B4E9', color="navy") +
+    theme(text = element_text(size = 10, color = "navy"),
+          axis.text = element_text(color = "navy"),
+          axis.line = element_line(color = "navy"),
+          panel.border = element_rect(color = "navy")) +
+  labs(
+    x = "Year", 
+    y = "Frequency", 
+    title = "Number of location data points collected by Google per day",
+    caption = "* Data points collected from 8/20/2013 - 3/29/2017")
+
+
+jpeg('boxplotfinal.jpg')
+boxplotfinal
+dev.off()
+```
+
+
+
+
+```{r}
+# make a chart showing the data broken down by time of day and velocity?
+```
+
+
+```{r}
+# mapping
+
+library(ggplot2)
+library(ggmap)
+
+US <- get_map(location = 'United States', zoom = 4)
+
+NewEngland <- get_map(location = 'New England', zoom = 8)
+
+Somerville <- get_map(location = 'Somerville, Massachusetts', zoom = 13)
+
+Boston <- get_map(location = 'Boston', zoom = 13)
+
+Northeast <- get_map(location = 'Massachusetts', zoom = 7, maptype = "terrain", color = "bw")
+
+# full map
+
+allpointsmap <- ggmap(Northeast) + geom_point(data = loc, aes(x = lon, y = lat) #, alpha = 0.3
+                              , size = .3, color = "blue") + 
+  theme(text = element_text(size = 10, color = "navy"),
+        axis.text = element_text(color = "navy"),
+          axis.line = element_line(color = "navy"),
+          panel.border = element_rect(color = "navy")) + 
+  labs(
+    x = "Longitude", 
+    y = "Latitude", 
+    title = "All location history data points collected by Google",
+    caption = "* Showing all recorded positions in Northeast U.S. (Aug 2013 - Mar 2017)")
+
+
+jpeg('allpointsmap.jpg')
+allpointsmap
+dev.off()
+     
+```
+
+```{r}
+# heat map, just new england
+
+NewEngland <- get_map(location = "Massachusetts", zoom = 7, maptype = "terrain")
+
+# Just look at 2016 data
+loc2016 <- with(loc, subset(loc, loc$time > as.POSIXct('2016-01-01 0:00:01')))
+loc2016 <- with(loc, subset(loc2016, loc$time < as.POSIXct('2016-12-31 23:59:59')))
+
+#library(tidyverse)
+#loc2016_small <- subset(loc2016, select=c("lat", "lon", "date"))
+
+ggmap(NewEngland) + geom_point(data = loc2016, aes(x = lon, y = lat), alpha = .1, size = .4, color = "red") + 
+  theme(legend.position = "right") + 
+  labs(
+    x = "Longitude", 
+    y = "Latitude", 
+    title = "",
+    caption = "")
+
+```
+```{r}
+# a map with color indicating velocity
+loc_2 <- loc[which(!is.na(loc$velocity)), ]
+
+
+
+bostonvel <- get_map(location = 'Davis Square', zoom = 10, maptype = "toner-lite")
+
+velocitymap <- 
+  ggmap(bostonvel) + geom_point(data = loc_2, aes(x = lon, y = lat, color = velocity), size = .1) + 
+        theme(legend.position = "right",
+              text = element_text(size=10, color = "navy"),
+              legend.key.size = unit(3,"point"),
+              axis.text = element_text(color = "navy"),
+              axis.line = element_line(color = "navy"),
+              panel.border = element_rect(color = "navy")) + 
+        guides(color = guide_legend(override.aes = list(size=3))) +
+        labs(x = "Longitude", y = "Latitude", 
+            title = "Location points colored according to velocity",
+            caption = "* Only data points with a velocity measurement are shown: 
+            86,129 out of the 969,206 total data points") +
+        scale_colour_gradient(low = "blue", high = "red", guide = guide_legend(title = "Velocity"))
+
+
+
+jpeg('velocitymap.jpg')
+velocitymap
+dev.off()
+```
+
+
+
+
+```{r}
+# zoomed into Davis Square
+velocityzoom <- get_map(location = 'Davis Square', zoom = 14, maptype = "toner-lite")
+
+guides(color = guide_legend(override.aes = list(size=5)))
+
+velocityzoommap <- 
+      ggmap(velocityzoom) + geom_point(data = loc_2, aes(x = lon, y = lat, color = velocity), size = .1) +
+        theme(legend.position = "right", 
+              text = element_text(size=10, color = "navy"),
+              legend.key.size = unit(3,"point"),
+              axis.text = element_text(color = "navy"),
+              axis.line = element_line(color = "navy"),
+              panel.border = element_rect(color = "navy")) +
+        guides(color = guide_legend(override.aes = list(size=3))) +
+        labs(x = "Longitude", y = "Latitude", 
+            title = "Location points colored according to velocity",
+             subtitle = "Zoomed into my neighborhood",
+            caption = "* Only data points with a velocity measurement are shown: 
+            86,129 out of the 969,206 total data points") +
+        scale_colour_gradient(low = "blue", high = "red", guide = guide_legend(title = "Velocity"))
+
+
+jpeg('velocityzoommap.jpg')
+velocityzoommap
+dev.off()
+```
+
+
+
+```{r}
+# look at a typical workweek in office job vs field job
+
+# office job... 9/21/15 - 9/25/15 ... exclude weekend
+# field job... 6/13/16 - 6/19/16 ... include weekend, worked weekend
+
+office_week <- loc %>%
+  filter(date > "2015-09-20", date < "2015-09-26")
+
+
+
+non_week <- loc %>%
+  filter(date > "2016-06-12", date < "2016-06-20")
+
+
+
+
+office <- get_map(location = 'Cambridge, Massachusetts', zoom = 13, maptype = "toner-lite")
+  #maptype = "toner-lite"
+
+# black map
+theme_set(theme_bw(16))
+bwoffice <- get_map(location = 'Cambridge, Massachusetts', zoom = 13, maptype = "terrain", color = "bw")
+
+bostonzoom <- get_map(location = "back bay", zoom = 14)
+
+# locations with office job
+officemap <- 
+  ggmap(bwoffice) + geom_point(data = office_week, aes(x = lon, y = lat), size = .6, color = "blue") + 
+  theme(legend.position = "right",
+        text = element_text(size = 10, color = "navy"),
+              axis.text = element_text(color = "navy"),
+              axis.line = element_line(color = "navy"),
+              panel.border = element_rect(color = "navy")) + 
+  labs(
+    x = "Longitude", 
+    y = "Latitude", 
+    title = "Typical week at 'desk' job",
+    caption = "* Location data points collected from 9/21/2015 - 9/25/2015 
+    (Monday-Friday work week)")
+
+
+jpeg('officemap.jpg')
+officemap
+dev.off()
+```
+
+```{r}
+# field job week
+
+
+fieldmap <- 
+ggmap(bwoffice) + geom_point(data = non_week, aes(x = lon, y = lat), size = .6, color = "blue") + 
+  theme(legend.position = "right",
+        text = element_text(size = 10, color = "navy"),
+        axis.text = element_text(color = "navy"),
+        axis.line = element_line(color = "navy"),
+        panel.border = element_rect(color = "navy")) + 
+  labs(
+    x = "Longitude", 
+    y = "Latitude", 
+    title = "Typical week at 'field' job",
+    caption = "* Location data points collected from 6/13/2016 - 6/19/2016 
+    (Monday-Sunday work week)")
+
+jpeg('fieldmap.jpg')
+fieldmap
+dev.off()
+```
+
+
+
+
+```{r}
+# Look at the data separately from 9-5 and from 5pm-9am to see how the maps differ?
+```
+
+
+```{r}
+# distance travelled
+
+#loc3 <- with(loc, subset(loc, loc$time > as.POSIXct('2016-01-01 0:00:01')))
+#loc3 <- with(loc, subset(loc3, loc$time < as.POSIXct('2016-12-22 23:59:59')))
+
+# Shifting vectors for latitude and longitude to include end position
+shift.vec <- function(vec, shift){
+  if (length(vec) <= abs(shift)){
+    rep(NA ,length(vec))
+  } else {
+    if (shift >= 0) {
+      c(rep(NA, shift), vec[1:(length(vec) - shift)]) }
+    else {
+      c(vec[(abs(shift) + 1):length(vec)], rep(NA, abs(shift)))
+    }
+  }
+}
+
+loc$lat.p1 <- shift.vec(loc$lat, -1)
+loc$lon.p1 <- shift.vec(loc$lon, -1)
+
+# Calculating distances between points (in metres) with the function pointDistance from the 'raster' package.
+library(raster)
+loc$dist.to.prev <- apply(loc, 1, FUN = function(row) {
+  pointDistance(c(as.numeric(as.character(row["lat.p1"])),
+                  as.numeric(as.character(row["lon.p1"]))),
+                c(as.numeric(as.character(row["lat"])), as.numeric(as.character(row["lon"]))),
+                lonlat = T) # Parameter 'lonlat' has to be TRUE!
+})
+# distance in miles
+round(sum(as.numeric(as.character(loc$dist.to.prev)), na.rm = TRUE)*0.000621371, digits = 2)
+## [1] 105916.4
+distance_p_month <- aggregate(loc$dist.to.prev, by = list(month_year = as.factor(loc$month_year)), FUN = sum)
+distance_p_month$x <- distance_p_month$x*0.000621371
+
+
+distancepermonth <- 
+ggplot(distance_p_month[-1, ], aes(x = month_year, y = x)) + 
+  geom_bar(stat = "identity", fill = "navy")  + 
+  guides(fill = FALSE) +
+  theme(text = element_text(size=10, color = "navy"),
+        axis.text = element_text(color = "navy"),
+        axis.line = element_line(color = "navy"),
+        panel.border = element_rect(color = "navy"),
+        axis.text.x = element_text(angle = 65, hjust = 1)) +
+  scale_x_discrete(breaks = levels(distance_p_month$month_year)[c(T, rep(F, 2))]) +
+  labs(
+    x = "",
+    y = "Distance in miles",
+    title = "Distance traveled per month",
+    caption = "* This barplot shows the sum of distances between recorded positions."
+  )
+
+
+jpeg('distancepermonth.jpg')
+distancepermonth
+dev.off()
+```
+
+
+```{r}
+# map charting monthly breakdown of distance vs average??
+ggplot(distance_p_month[-1, ], aes(x = month_year, y = x)) + 
+  geom_area() + 
+  scale_x_date() + 
+  theme(axis.text.x = element_text(angle=90)) + 
+  labs(title="Area Chart", 
+       subtitle = "Perc Returns for Personal Savings", 
+       y="% Returns for Personal savings", 
+       caption="Source: economics")
+```
+
+
+```{r}
+#map the activity breakdown between desk job and field job life
+activities <- loc$activity
+
+list.condition <- sapply(activities, function(x) !is.null(x[[1]]))
+activities  <- activities[list.condition]
+
+df <- do.call("rbind", activities)
+main_activity <- sapply(df$activities, function(x) x[[1]][1][[1]][1])
+
+activities_2 <- data.frame(main_activity = main_activity, 
+                           time = as.POSIXct(as.numeric(df$timestampMs)/1000, origin = "1970-01-01"))
+
+head(activities_2)
+##   main_activity                time
+## 1         still 2016-12-22 08:52:45
+## 2         still 2016-12-22 08:46:57
+## 3         still 2016-12-22 08:33:24
+## 4         still 2016-12-22 08:21:31
+## 5         still 2016-12-22 08:15:32
+## 6         still 2016-12-22 08:10:25
+ggplot(activities_2, aes(x = main_activity, group = main_activity, fill = main_activity)) + 
+  geom_bar()  + 
+  guides(fill = FALSE) +
+  my_theme() +
+  labs(
+    x = "",
+    y = "Count",
+    title = "Main activities in 2016",
+    caption = "Associated activity for recorded positions in 2016. 
+    Because Google records activity probabilities for each position, 
+    only the activity with highest likelihood were chosen for each position."
+  )
+```
+
+
+
+
+
+
+
+
+
+
