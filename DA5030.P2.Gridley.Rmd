@@ -1,0 +1,1632 @@
+---
+title: "DA5030 - Practicum 2"
+author: "Brian Gridley"
+date: "November 2, 2018"
+output: pdf_document
+---
+
+PROBLEM 1:
+
+1)   Download the data set Census Income Data for Adults along with its explanation. Note that the data file does not contain header names; you may wish to add those. The description of each column can be found in the data set explanation. 
+
+```{r}
+# the data is located online, so I will download from the url 
+# and create a dataframe with the data ("census_income")
+
+dataurl <- "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+download.file(url = dataurl, destfile = "adult.data")
+census_income <- read.csv("adult.data", header = FALSE, sep = ",", strip.white = TRUE) 
+# the dataset is a csv but there is a space after each comma, 
+# so I removed the leading spaces with "strip.white = TRUE"
+
+head(census_income)
+# looks good
+
+# now download the explanation 
+data_desc_url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.names"
+download.file(url = data_desc_url, destfile = "adult.names")
+census_income_desc <- read.delim("adult.names", header = FALSE)
+
+
+
+# Add column headers to the data, using the variable names in 
+# the "census_income_desc" file
+names(census_income) <- c("age","workclass","fnlwgt","education",
+                          "education-num","marital-status","occupation",
+                          "relationship","race","sex","capital-gain",
+                          "capital-loss","hours-per-week",
+                          "native-country","income")
+
+head(census_income)
+# looks good!
+```
+
+2)   Explore the data set as you see fit and that allows you to get a sense of the data and get comfortable with it. Is there distributional skew in any of the features? Is there a need to apply a transform? 
+
+```{r}
+# look at the structure
+str(census_income)
+
+summary(census_income)
+```
+
+There are 32,561 records and 15 variables. There are a combination of numeric and factor variables. All of the categorical variables are already factors, so we won't need to convert any of them. I noticed in the structure that there are unknown values in three of the variables... "workclass", "occupation", and "native-country". They are marked with a "?". I'll want to remove these. I can also tell that the "capital-gain" and "capital-loss" variables are right-skewed because the 1st quartile, median, and 3rd quartile values are all 0 but there are a few larger values to the right because the mean and max are high.
+
+However, since I will be applying the Naive Bayes algorithm using just the categorical variables here, I won't need to bother transforming any numeric variables. I will remove the unkown values from the data though, to have a cleaner liklihood table.
+
+```{r}
+# take care of the unknown values in the data. There are three 
+# variables that have unknowns present... 
+# workclass, occupation, and native-country
+
+table(census_income$workclass)
+# 1836 records
+table(census_income$occupation)
+# 1843 records
+table(census_income$`native-country`)
+# 583
+
+# remove "?" data 
+library(tidyverse)
+
+count(filter(census_income, workclass == "?" | occupation == "?" | 
+               `native-country` == "?"))
+# 2399 total records need to be removed
+
+census_income_clean <- census_income %>%
+  filter(workclass != "?" & occupation != "?" & `native-country` != "?")
+
+# check to make sure the correct amount was removed
+count(census_income)
+# 32561
+count(census_income_clean)
+# 30162 
+
+32561-30162
+# 2399... thats correct
+```
+
+
+3)   Create a frequency and then a likelihood table for the categorical features in the data set. Build your own Naive Bayes classifier for those features.
+
+```{r}
+str(census_income_clean)
+```
+
+Income is the binomial classification variable. Each of the predictor categorical variables are workclass (9 levels), education (16 levels), marital-status (7), occupation (15), relationship (6), race (5), sex (2), and native-country (42). This would be quite difficult to manage and make sure there are no mistakes if I created a frequency table all at once, so I will create a separate frequency table for each categorical variable to make things easier to comprehend. I will then combine them all into one total table and create a total liklihood table to use for the algorithm. I will do this manually rather than automate the process with a loop or function, so I can make sure all levels of each variable are examined carefully.
+
+```{r}
+# workclass
+
+# frequency table
+table(census_income_clean$workclass)
+
+# first create a table with the counts of each class level, by income type
+workclass_frequency_yes <- census_income_clean %>%
+                          group_by(workclass, income) %>%
+                          summarise(count = n())
+
+workclass_frequency_yes
+
+# noticed that there is no "Without-pay" for ">50K"
+# so I will add this to the table with a count of 0
+workclass_frequency_yes[nrow(workclass_frequency_yes) + 1,] = 
+  list("Without-pay",">50K",0)
+
+# create an object with the total counts for each income level
+# which will be used to calculate the "no" counts for each level
+total_counts <- workclass_frequency_yes %>%
+  group_by(income) %>%
+  summarise(count_total = sum(count))
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+workclass_frequency_No <- workclass_frequency_yes
+
+# bring in the total counts to calculate the no's
+workclass_frequency_No <- left_join(workclass_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+workclass_frequency_No <- workclass_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+workclass_frequency_No <- workclass_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(workclass_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+workclass_frequency_No$workclass <- paste(workclass_frequency_No$workclass,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+workclass_frequency_yes$workclass <- paste(workclass_frequency_yes$workclass,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+workclass_frequency <- rbind(workclass_frequency_yes, workclass_frequency_No)
+
+# need to adjust for instances where there is no occurrence
+# will use laplace estimator of 1... add 1 to every count value in the 
+# table so a 0 doesn't occur and ruin our Naive Bayes calculations
+workclass_frequency$count <- workclass_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+workclass_frequency <- arrange(workclass_frequency, workclass)
+
+
+# now reorganize the table to be in proper format
+workclass_frequency <- spread(workclass_frequency, key = "workclass", value = "count")
+
+workclass_frequency
+# great, the frequency table is all set now
+```
+
+That's the frequency table for the first categorical variable... now do the same for next one
+
+```{r}
+# education
+
+# frequency table
+table(census_income_clean$education)
+
+# first create a table with the counts of each class level, by income type
+education_frequency_yes <- census_income_clean %>%
+                          group_by(education, income) %>%
+                          summarise(count = n())
+
+education_frequency_yes
+
+# noticed that there is no "Preschool" for ">50K"
+# so I will add this to the table with a count of 0
+education_frequency_yes[nrow(education_frequency_yes) + 1,] = 
+  list("Preschool",">50K",0)
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+education_frequency_No <- education_frequency_yes
+
+# bring in the total counts to calculate the no's
+education_frequency_No <- left_join(education_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+education_frequency_No <- education_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+education_frequency_No <- education_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(education_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+education_frequency_No$education <- paste(education_frequency_No$education,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+education_frequency_yes$education <- paste(education_frequency_yes$education,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+education_frequency <- rbind(education_frequency_yes, education_frequency_No)
+
+# use laplace estimator of 1... add 1 to every count value
+education_frequency$count <- education_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+education_frequency <- arrange(education_frequency, education)
+
+
+# now reorganize the table to be in proper format
+education_frequency <- spread(education_frequency, key = "education", value = "count")
+
+education_frequency
+# great, the frequency table is all set now
+```
+
+Now, do the same for the next variable
+
+```{r}
+# marital-status
+
+# frequency table
+table(census_income_clean$`marital-status`)
+
+# first create a table with the counts of each class level, by income type
+marital_frequency_yes <- census_income_clean %>%
+                          group_by(`marital-status`, income) %>%
+                          summarise(count = n())
+
+marital_frequency_yes
+
+# There are no missing instances that need to be correctd for
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+marital_frequency_No <- marital_frequency_yes
+
+# bring in the total counts to calculate the no's
+marital_frequency_No <- left_join(marital_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+marital_frequency_No <- marital_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+marital_frequency_No <- marital_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(marital_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+marital_frequency_No$`marital-status` <- paste(marital_frequency_No$`marital-status`,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+marital_frequency_yes$`marital-status` <- paste(marital_frequency_yes$`marital-status`,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+marital_frequency <- rbind(marital_frequency_yes, marital_frequency_No)
+
+# although there are no instances with no occurrences
+# I will still use laplace estimator of 1 to keep things consistent
+marital_frequency$count <- marital_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+marital_frequency <- arrange(marital_frequency, `marital-status`)
+
+
+# now reorganize the table to be in proper format
+marital_frequency <- spread(marital_frequency, key = "marital-status", value = "count")
+
+marital_frequency
+# great, the frequency table is all set now
+```
+
+Next variable...
+
+```{r}
+# occupation
+
+# frequency table
+table(census_income_clean$occupation)
+
+# first create a table with the counts of each class level, by income type
+occupation_frequency_yes <- census_income_clean %>%
+                          group_by(occupation, income) %>%
+                          summarise(count = n())
+
+occupation_frequency_yes
+
+# There are no missing instances that need to be corrected for
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+occupation_frequency_No <- occupation_frequency_yes
+
+# bring in the total counts to calculate the no's
+occupation_frequency_No <- left_join(occupation_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+occupation_frequency_No <- occupation_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+occupation_frequency_No <- occupation_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(occupation_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+occupation_frequency_No$occupation <- paste(occupation_frequency_No$occupation,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+occupation_frequency_yes$occupation <- paste(occupation_frequency_yes$occupation,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+occupation_frequency <- rbind(occupation_frequency_yes, occupation_frequency_No)
+
+# although there are no instances with no occurrences
+# I will still use laplace estimator of 1 to keep things consistent
+occupation_frequency$count <- occupation_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+occupation_frequency <- arrange(occupation_frequency, occupation)
+
+
+# now reorganize the table to be in proper format
+occupation_frequency <- spread(occupation_frequency, key = "occupation", value = "count")
+
+occupation_frequency
+# great, the frequency table is all set now
+```
+
+Next variable...
+
+```{r}
+# relationship
+
+# frequency table
+table(census_income_clean$relationship)
+
+# first create a table with the counts of each class level, by income type
+relationship_frequency_yes <- census_income_clean %>%
+                          group_by(relationship, income) %>%
+                          summarise(count = n())
+
+relationship_frequency_yes
+
+# There are no missing instances that need to be corrected for
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+relationship_frequency_No <- relationship_frequency_yes
+
+# bring in the total counts to calculate the no's
+relationship_frequency_No <- left_join(relationship_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+relationship_frequency_No <- relationship_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+relationship_frequency_No <- relationship_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(relationship_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+relationship_frequency_No$relationship <- paste(relationship_frequency_No$relationship,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+relationship_frequency_yes$relationship <- paste(relationship_frequency_yes$relationship,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+relationship_frequency <- rbind(relationship_frequency_yes, relationship_frequency_No)
+
+# although there are no instances with no occurrences
+# I will still use laplace estimator of 1 to keep things consistent
+relationship_frequency$count <- relationship_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+relationship_frequency <- arrange(relationship_frequency, relationship)
+
+
+# now reorganize the table to be in proper format
+relationship_frequency <- spread(relationship_frequency, key = "relationship", value = "count")
+
+relationship_frequency
+# great, the frequency table is all set now
+```
+
+Next variable...
+
+```{r}
+# race
+
+# frequency table
+table(census_income_clean$race)
+
+# first create a table with the counts of each class level, by income type
+race_frequency_yes <- census_income_clean %>%
+                          group_by(race, income) %>%
+                          summarise(count = n())
+
+race_frequency_yes
+
+# There are no missing instances that need to be corrected for
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+race_frequency_No <- race_frequency_yes
+
+# bring in the total counts to calculate the no's
+race_frequency_No <- left_join(race_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+race_frequency_No <- race_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+race_frequency_No <- race_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(race_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+race_frequency_No$race <- paste(race_frequency_No$race,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+race_frequency_yes$race <- paste(race_frequency_yes$race,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+race_frequency <- rbind(race_frequency_yes, race_frequency_No)
+
+# although there are no instances with no occurrences
+# I will still use laplace estimator of 1 to keep things consistent
+race_frequency$count <- race_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+race_frequency <- arrange(race_frequency, race)
+
+
+# now reorganize the table to be in proper format
+race_frequency <- spread(race_frequency, key = "race", value = "count")
+
+race_frequency
+# great, the frequency table is all set now
+```
+
+Next variable...
+
+```{r}
+# sex
+
+# frequency table
+table(census_income_clean$sex)
+
+# first create a table with the counts of each class level, by income type
+sex_frequency_yes <- census_income_clean %>%
+                          group_by(sex, income) %>%
+                          summarise(count = n())
+
+sex_frequency_yes
+
+# There are no missing instances that need to be corrected for
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+sex_frequency_No <- sex_frequency_yes
+
+# bring in the total counts to calculate the no's
+sex_frequency_No <- left_join(sex_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+sex_frequency_No <- sex_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+sex_frequency_No <- sex_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(sex_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+sex_frequency_No$sex <- paste(sex_frequency_No$sex,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+sex_frequency_yes$sex <- paste(sex_frequency_yes$sex,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+sex_frequency <- rbind(sex_frequency_yes, sex_frequency_No)
+
+# although there are no instances with no occurrences
+# I will still use laplace estimator of 1 to keep things consistent
+sex_frequency$count <- sex_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+sex_frequency <- arrange(sex_frequency, sex)
+
+
+# now reorganize the table to be in proper format
+sex_frequency <- spread(sex_frequency, key = "sex", value = "count")
+
+sex_frequency
+# great, the frequency table is all set now
+```
+
+Now the last variable...
+
+```{r}
+# native-country
+
+# frequency table
+table(census_income_clean$`native-country`)
+
+# first create a table with the counts of each class level, by income type
+country_frequency_yes <- census_income_clean %>%
+                          group_by(`native-country`, income) %>%
+                          summarise(count = n())
+
+country_frequency_yes
+
+# There are missing instances for "Outlying-US(Guam-USVI-etc)" / ">50K"
+# and "Holand-Netherlands" / ">50K"... add 2 rows
+country_frequency_yes[nrow(country_frequency_yes) + 1,] = 
+  list("Outlying-US(Guam-USVI-etc)",">50K",0)
+
+country_frequency_yes[nrow(country_frequency_yes) + 1,] = 
+  list("Holand-Netherlands",">50K",0)
+
+
+# create another table with the same classes, to be filled in 
+# for the "No" columns in the table
+country_frequency_No <- country_frequency_yes
+
+# bring in the total counts to calculate the no's
+country_frequency_No <- left_join(country_frequency_No, 
+                                    total_counts, by = "income")
+
+# calculate the "no" counts
+country_frequency_No <- country_frequency_No %>%
+  mutate(count_no =  count_total - count)
+
+# now delete the "yes" and "total" count columns
+country_frequency_No <- country_frequency_No %>%
+  select(1,2,5)
+
+# rename the "count_no" column to just "count" for when we append to the "yes" table
+colnames(country_frequency_No)[3] <- "count"
+
+# add "_no" to the class type name
+country_frequency_No$`native-country` <- paste(country_frequency_No$`native-country`,
+                                       "No", sep = "_")
+
+# now add "_yes" to the yes table
+country_frequency_yes$`native-country` <- paste(country_frequency_yes$`native-country`,
+                                       "Yes", sep = "_")
+
+# append the "no" table to the "yes" table
+country_frequency <- rbind(country_frequency_yes, country_frequency_No)
+
+# apply the laplace estimator of 1 
+country_frequency$count <- country_frequency$count + 1
+
+# order the class name column alphabetically so when we spread it, the "yes"
+# column is next to the "no" column for each class type
+country_frequency <- arrange(country_frequency, `native-country`)
+
+
+# now reorganize the table to be in proper format
+country_frequency <- spread(country_frequency, key = "native-country", value = "count")
+
+country_frequency
+# great, the frequency table is all set now
+```
+
+All of the separate categorical predictor variable frequency tables are created. I will combine them all into one total frequency table and create a combined liklihood table to be used for the Naive Bayes algorithm.
+
+```{r}
+# total frequency table... combining them and removing the first column 
+# from all but the first table, so it is not repeated
+
+frequency_total <- cbind(workclass_frequency, 
+                         education_frequency[2:ncol(education_frequency)], 
+                         marital_frequency[2:ncol(marital_frequency)], 
+                         occupation_frequency[2:ncol(occupation_frequency)], 
+                         relationship_frequency[2:ncol(relationship_frequency)], 
+                         race_frequency[2:ncol(race_frequency)], 
+                         sex_frequency[2:ncol(sex_frequency)], 
+                         country_frequency[2:ncol(country_frequency)])
+
+
+frequency_total
+
+# checking the total columns... subtract 7 at the end
+# because the first column was removed from the final 7 tables
+sum(ncol(workclass_frequency),ncol(education_frequency), 
+    ncol(marital_frequency), ncol(occupation_frequency), 
+    ncol(relationship_frequency), ncol(race_frequency), 
+    ncol(sex_frequency), ncol(country_frequency), -7)
+# they match... so the table is complete
+
+
+
+
+# Create the total liklihood table
+
+
+# create a liklihood table to populate... same dimensions
+liklihood_total <- frequency_total
+
+# calculate the liklihoods
+liklihood_total1 <- 
+  data.frame(less = apply(liklihood_total[1,c(2:197)], 1, 
+              function (x) x/sum(frequency_total[1,2:3])))
+
+liklihood_total2 <- 
+  data.frame(greater = apply(liklihood_total[2,c(2:197)], 1, 
+              function (x) x/sum(frequency_total[2,2:3])))
+
+
+# populate the liklihoods into the proper table format
+liklihood_total[1,2:197] <- liklihood_total1[,1]
+liklihood_total[2,2:197] <- liklihood_total2[,1]
+
+liklihood_total
+# looks good
+
+
+# do a few checks in the table
+
+# check a percentage in the "<=50K" row from the individual
+# frequency table counts
+education_frequency$`Some-college_No`[1]/sum(education_frequency[1,2:3])
+# 0.7641684
+
+# check the final liklihood value
+liklihood_total$`Some-college_No`[1]
+# 0.7641684... it matches
+
+# check one from the ">50K" row
+sex_frequency$Female_Yes[2]/sum(education_frequency[2,2:3])
+# 0.1482024
+
+liklihood_total$Female_Yes[2]
+# 0.1482024... matches
+
+# everything looks correct
+
+```
+
+Now, building a Naive Bayes classifier... To summarize the Naive Bayes, you multiply the conditional probabilities according to the Naive Bayes' rule to come up with the liklihood of the class you are interested in, then divide by the total likelihood to transform it into a probability. For this data, you multiply each individual conditional probability of the feature given that income is ">50K" times the overall probability of it being ">50K", then you divide by the total likelihood across all possible outcomes to get the probability of it being classified as ">50K.
+
+```{r}
+# I am creating a Naive Bayes classifier that takes the 
+# frequency data as an input (to calculate the prior probabilities),
+# as well as the liklihood data (to identify the conditional probabilities
+# to include in the calculation), and a feature column number vector, 
+# which identifies which columns in the liklihood table we should look
+# at based on the classifying problem
+
+bayes_income_data <- function(frequency_data, liklihood_data, feature_colnum_vector) 
+{
+  greater_prior_prob <- sum(frequency_data[2,2:3])/(sum(frequency_data[1:2,2:3]))
+  less_prior_prob <- sum(frequency_data[1,2:3])/(sum(frequency_data[1:2,2:3]))
+  
+  liklihood_greater <- prod(liklihood_data[2,feature_colnum_vector]) * greater_prior_prob
+  liklihood_less <- prod(liklihood_data[1,feature_colnum_vector]) * less_prior_prob
+  
+  prob <- (liklihood_greater/(liklihood_greater+liklihood_less))
+  bayes_income_data <- prob
+}
+```
+
+
+4)   Predict the binomial class membership for a white female adult who is a federal government worker with a bachelors degree who immigrated from India. Ignore any other features in your model. You must build your own Naive Bayes Classifier -- you may not use a package.
+
+```{r}
+# the problem calls for:
+# race = white
+# sex = female
+# workclass = federal government
+# education = bachelors degree
+# native-country = India
+
+# looking at the liklihood_total table to get the appropriate column numbers
+# for the function I created
+
+# race = white = 111
+# sex = female = 113
+# workclass = federal government = 3
+# education = bachelors degree = 35
+# native-country = India = 153
+
+# checking the columns for feature_colnum_vector for the function
+liklihood_total[,c(111,113,3,35,153)]
+
+# great, now can insert into the function
+case1 <- bayes_income_data(frequency_total,liklihood_total,c(111,113,3,35,153))
+
+case1
+# 0.5410806... 54% chance of greater than 50K
+```
+
+According to the function I created, this person has a 54% chance of making an income >50K
+
+```{r}
+# checking the result manually
+
+greater_prior_prob <- sum(frequency_total[2,2:3])/(sum(frequency_total[1:2,2:3]))
+
+less_prior_prob <- sum(frequency_total[1,2:3])/(sum(frequency_total[1:2,2:3]))
+
+liklihood_greater <- liklihood_total$White_Yes[2] * liklihood_total$Female_Yes[2] * 
+   liklihood_total$`Federal-gov_Yes`[2] * liklihood_total$Bachelors_Yes[2] *
+   liklihood_total$India_Yes[2] * greater_prior_prob
+
+liklihood_less <- liklihood_total$White_Yes[1] * liklihood_total$Female_Yes[1] * 
+   liklihood_total$`Federal-gov_Yes`[1] * liklihood_total$Bachelors_Yes[1] *
+   liklihood_total$India_Yes[1] * less_prior_prob
+
+# probability of making >50K
+liklihood_greater/(liklihood_greater+liklihood_less)
+# 0.5410806
+
+# this matches the output from the function
+```
+
+5)   Perform 10-fold cross validation on your algorithm to tune it and report the final accuracy results.
+
+For this question, I am using the liklihood table that I already created from the full dataset as the trained model for each of the 10 tests in the cross validation rather than create a new liklihood table 10 separate times for each test, since that would be very time consuming. So, I'm using the liklihood table I created (liklihood_total) and testing a different 1/10th of the data as the test data in each classification test (and calculating the average accuracy).
+
+```{r}
+# first I will adjust the liklihood table a bit and my Naive Bayes
+# classification algorithm for this large amount of data to run
+# through it more smoothly, for a more automated method
+
+# since the classification is only looking at cases where a categorical
+# variable is "yes", I can delete the "no" columns in my liklihood table to
+# be able to automate the classification process for such a large amount of data
+
+liklihood_total_short <- liklihood_total
+
+# all yes columns are the odd numbered from 2-197
+# also want to include row 1...
+# create a vector of these columns
+columns <- seq(from = 1, by = 2, to = 197)
+
+# now take just those columns
+liklihood_total_short <- liklihood_total_short[columns]
+
+# now remove "_Yes" from the column names so that I can
+# match each class level on the column names rather than
+# have to use column numbers
+ colnames(liklihood_total_short)[2:99] <- 
+  c(substr(colnames(liklihood_total_short[2:99]),1,
+  nchar(colnames(liklihood_total_short[2:99]))-4))
+
+liklihood_total_short
+# looks good
+
+# the columns can now be referenced by the variable values in the data set
+
+# create an adjusted version of my naive bayes algorithm to match
+# values in the validation cells to column names in the liklihood table
+# and to calculate overall accuracy by running the validation data through 
+# the algorithm; classifying each record in the data; comparing it to
+# the actual classification; and calculating the percentage of correct 
+# classifications
+
+bayes_income_accuracy <- function(liklihood_data, validation_data) 
+{
+  greater_prior_prob <- 0.2489558
+  less_prior_prob <- 0.7510442
+  m <- nrow(validation_data)
+  greater <- numeric(m)
+  less <- numeric(m)
+  total_prob <- numeric(m)
+  prediction <- numeric(m)
+  actual <- numeric(m)
+  
+  for (i in 1:3016) {
+    greater[i] <- liklihood_data[2,as.character(validation_data[i,1])] *
+      liklihood_data[2,as.character(validation_data[i,2])] *
+      liklihood_data[2,as.character(validation_data[i,3])] *
+      liklihood_data[2,as.character(validation_data[i,4])] *
+      liklihood_data[2,as.character(validation_data[i,5])] *
+      liklihood_data[2,as.character(validation_data[i,6])] *
+      liklihood_data[2,as.character(validation_data[i,7])] *
+      liklihood_data[2,as.character(validation_data[i,8])] *
+      greater_prior_prob
+  
+    less[i] <- liklihood_data[1,as.character(validation_data[i,1])] *
+      liklihood_data[1,as.character(validation_data[i,2])] *
+      liklihood_data[1,as.character(validation_data[i,3])] *
+      liklihood_data[1,as.character(validation_data[i,4])] *
+      liklihood_data[1,as.character(validation_data[i,5])] *
+      liklihood_data[1,as.character(validation_data[i,6])] *
+      liklihood_data[1,as.character(validation_data[i,7])] *
+      liklihood_data[1,as.character(validation_data[i,8])] *
+      less_prior_prob
+    
+    total_prob[i] <- (greater[i]/(greater[i]+less[i]))
+    
+    prediction[i] <- ifelse(total_prob[i] < 0.5, "<=50K", ">50K")
+    
+    actual[i] <- as.character(validation_data[i,9])
+  }
+  
+  bayes_income_accuracy <- sum(prediction == actual)/m
+
+}
+ 
+
+
+# Next I will split the original data set into 10 equal parts,
+# taking just the categorical variables, which is what is in 
+# the liklihood table
+validate <- census_income_clean[,c(2,4,6:10,14:15)]
+
+head(validate)
+# looks good
+
+nrow(validate)
+# 30162
+
+# split it into 10 separate groups
+validate1 <- validate[1:3016,]
+validate2 <- validate[3017:6032,]
+validate3 <- validate[6033:9048,]
+validate4 <- validate[9049:12064,]
+validate5 <- validate[12065:15080,]
+validate6 <- validate[15081:18096,]
+validate7 <- validate[18097:21112,]
+validate8 <- validate[21113:24128,]
+validate9 <- validate[24129:27144,]
+validate10 <- validate[27145:30162,]
+
+# use the updated Naive Bayes accuracy function to 
+# calculate the accuracy for each of the 10 validation
+# data sets using the liklihood table that we already 
+# created
+accuracy1 <- bayes_income_accuracy(liklihood_total_short, validate1)
+# 0.7970822
+accuracy2 <- bayes_income_accuracy(liklihood_total_short, validate2)
+#0.7871353
+accuracy3 <- bayes_income_accuracy(liklihood_total_short, validate3)
+#0.7937666
+accuracy4 <- bayes_income_accuracy(liklihood_total_short, validate4)
+#0.7864721
+accuracy5 <- bayes_income_accuracy(liklihood_total_short, validate5)
+#0.7897878
+accuracy6 <- bayes_income_accuracy(liklihood_total_short, validate6)
+#0.7887931
+accuracy7 <- bayes_income_accuracy(liklihood_total_short, validate7)
+#0.7884615
+accuracy8 <- bayes_income_accuracy(liklihood_total_short, validate8)
+#0.8007294
+accuracy9 <- bayes_income_accuracy(liklihood_total_short, validate9)
+#0.7974138
+accuracy10 <- bayes_income_accuracy(liklihood_total_short, validate10)
+#0.7819748
+
+# calculate the average of the 10 tests
+mean(accuracy1,accuracy2,accuracy3,accuracy4,accuracy5,accuracy6,
+     accuracy7,accuracy8,accuracy9,accuracy10)
+# 0.7970822
+
+```
+
+After splitting the data into 10 equal subsets, I classified each record in each of the subsets. I then calculated the accuracy of the classifications from each of the 10 tests in the cross validations using my bayes_income_accuracy function. I averaged each of the 10 tests to find that the algorithm I created accurately predicted 79.7% of the data on average. This is not a true 10-fold cross validation because the training data didn't change each time. You should use the remaining data from the full data set that's not included in each of the 10 subsets for each run, meaning the likihood table should be updated and changed for each of the runs based on what data is included in the training set. But I assumed for this problem that we should use our own algorithm rather than a built in package, so I used the liklihood table that was created earlier in the problem in my algorithm.
+
+
+
+PROBLEM 2:   After reading the case study background information, using the UFFI data set, answer these questions:
+
+1)   Are there outliers in the data set? How do you identify outliers and how do you deal with them? Remove them but create a second data set with outliers removed. Keep the original data set.
+
+```{r}
+# import the data
+uffi <- read_csv("C:/Users/gridl/Documents/NEU/Classes/machine_learning/week_9/uffidata.csv")
+
+# looking into the data
+head(uffi)
+
+str(uffi)
+# 99 records, 12 variables... 1 of which is just an observation ID
+# all are numeric, with some binary
+summary(uffi)
+# based on the summary statistics, the sale price, lot area, and
+# living area SF look like they are right-skewed and might have outliers 
+# because the mean is significantly higher than the median
+
+# looking into the distributions more to confirm
+# looking at all continuous variables
+hist(uffi$`Year Sold`)
+# looks okay
+
+hist(uffi$`Sale Price`)
+# as suspected, it is right-skewed with some outliers on the high end
+
+hist(uffi$`Bsmnt Fin_SF`)
+# looks like it may be okay, but will examine further 
+
+hist(uffi$`Lot Area`)
+# looks okay, maybe a few outliers to right, but will examine further
+
+hist(uffi$`Enc Pk Spaces`)
+# should be okay
+
+hist(uffi$`Living Area_SF`)
+# definitely appears to be outliers on the high end
+
+
+# further examining outliers, I will look at the zscores for those variables
+# using a zscore of 3 as the outlier threshold
+
+# copy data into new data frame for this
+uffi_no_outliers <- uffi
+
+
+uffi_no_outliers %>%
+  mutate(zscore_SalePrice = (`Sale Price`-mean(`Sale Price`))/sd(`Sale Price`)) %>%
+  filter(abs(zscore_SalePrice) >= 3)
+  # 3 outliers on the higher end
+
+# remove them...
+uffi_no_outliers <- uffi_no_outliers %>%
+  filter(Observation != 94 & Observation != 40 & Observation != 60)
+
+
+# look at zscores of `Bsmnt Fin_SF`
+uffi_no_outliers %>%
+  mutate(zscore_bsmnt = (`Bsmnt Fin_SF`-mean(`Bsmnt Fin_SF`))/sd(`Bsmnt Fin_SF`)) %>%
+  filter(abs(zscore_bsmnt) >= 3)
+# no outliers
+
+# look at zscores of `Lot Area`
+uffi_no_outliers %>%
+  mutate(zscore_lot = (`Lot Area`-mean(`Lot Area`))/sd(`Lot Area`)) %>%
+  filter(abs(zscore_lot) >= 3)
+# two outliers on higher end
+
+# remove them...
+uffi_no_outliers <- uffi_no_outliers %>%
+  filter(Observation != 12 & Observation != 48)
+
+# look at zscores of `Living Area_SF`
+uffi_no_outliers %>%
+  mutate(zscore_SF = (`Living Area_SF`-mean(`Living Area_SF`))/sd(`Living Area_SF`)) %>%
+  filter(abs(zscore_SF) >= 3)
+# one outlier on higher end
+
+# remove it...
+uffi_no_outliers <- uffi_no_outliers %>%
+  filter(Observation != 21)
+
+
+# all outliers are now removed from the copied data frame
+```
+
+There are outliers in the data set. I first examined the summary statistics of the continuous variables to get a hint of the existence of outliers, where the mean and median are very different from each other. I then examined the distributions in a separate histogram for each variable to look for skewness. Lastly, I confirmed the outliers by looking at the z-score to see if there are instances where a record is >= 3 or <= -3 standard deviations from the mean, which is the threshold I used to define an outlier. I found outliers in `Sale Price`, `Lot Area`, and `Living Area_SF`. I removed 5 records from the data set and stored the remaining records as a new object "uffi_no_outliers".
+
+
+2)   What are the correlations to the response variable and are there colinearities? Build a full correlation matrix.
+
+The response variable is the sales price. I will build a full correlation matrix looking at all variables.
+
+```{r}
+# investigating the pairwise correlations, with the updated data set
+# with outliers removed
+cor(uffi_no_outliers[c("Sale Price", "Year Sold", "UFFI IN", 
+                        "Brick Ext", "45 Yrs+", "Bsmnt Fin_SF", 
+                        "Lot Area", "Enc Pk Spaces", "Living Area_SF", 
+                        "Central Air", "Pool")])
+```
+
+Looking at the correlation matrix, it appears that `Sale Price` has a fairly strong positive correlation with `Year Sold` and `Living Area_SF`. `Sale Price` has a weak to moderate correlation with `UFFI IN` (-), `45 Yrs+` (-), `Bsmnt Fin_SF` (+), `Lot Area` (+), `Enc Pk Spaces` (+), and `Central Air` (+). And `Sale Price` has a weak positive correlation with both `Brick Ext` and `Pool`. Based on the correlations, I would expect `Year Sold` and `Living Area_SF` to be good predictive variables while `Brick Ext` and `Pool` won't be at all.
+
+Looking at colinearity now. Will use pairs.panels for an easier way to view the relationships.
+
+```{r}
+library(psych)
+
+pairs.panels(uffi_no_outliers[c("Sale Price", "Year Sold", "UFFI IN", 
+                        "Brick Ext", "45 Yrs+", "Bsmnt Fin_SF", 
+                        "Lot Area", "Enc Pk Spaces", "Living Area_SF", 
+                        "Central Air", "Pool")])
+```
+
+Seeing if any of the continuous variables could be transformed to have a more normal distribution.
+
+```{r}
+hist(uffi_no_outliers$`Sale Price`)
+# normal enough
+
+hist(uffi_no_outliers$`Year Sold`)
+# would a sqrt transform help?
+hist(sqrt(uffi_no_outliers$`Year Sold`))
+# what about a log transform?
+hist(log(uffi_no_outliers$`Year Sold`))
+# no, transform is no better with Year Sold
+
+hist(uffi_no_outliers$`Bsmnt Fin_SF`)
+# look at transforms
+hist(sqrt(uffi_no_outliers$`Bsmnt Fin_SF`))
+hist(log(uffi_no_outliers$`Bsmnt Fin_SF`))
+# the log is a little bit better but may not be worth it
+
+hist(uffi_no_outliers$`Lot Area`)
+# normal enough
+
+hist(uffi_no_outliers$`Living Area_SF`)
+# look at transforms
+hist(sqrt(uffi_no_outliers$`Living Area_SF`))
+hist(log(uffi_no_outliers$`Living Area_SF`))
+# again, the log is a little bit better but doesn't seem to be worth it
+```
+
+
+Looking at the correlations between the predictive variables, there aren't any that are really high and are too concerning, so I think it should be good for modeling. The distributions for the continuous variables are close enough to normal, so they should be okay to model without any transformations. I tested out a log and sqrt transform for the variable but it didn't improve it much, so I decided it wasn't necessary.
+
+3)   What is the ideal multiple regression model for predicting home prices in this data set using the data set with outliers removed? Provide a detailed analysis of the model, including Adjusted R-Squared, RMSE, and p-values of principal components. Use backward elimination by p-value to build the model.
+
+```{r}
+# building the full model, including all predictor variables, 
+# then using p-value backward elimination to pair it down to 
+# all significant predictors for the final model
+
+# Starting with all variables, and no transforms. The response variable
+# is relatively normal. Some of the predictors have strange distributions
+# but I will leave them as is for the model
+
+m1 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+`Brick Ext`+`45 Yrs+`+
+           `Bsmnt Fin_SF`+`Lot Area`+`Enc Pk Spaces`+`Living Area_SF`+
+           `Central Air`+`Pool`, data = uffi_no_outliers)
+# looking at the summary
+summary(m1)  
+# looking at the p-values, as expected, `Year Sold` and `Living Area_SF`
+# are significant, meaning they are good predictors
+
+# looking at the coefficients, they both have a positive relationship with
+# sales price, meaning as they increase, so does sales price.
+
+# `Enc Pk Spaces` is also significant, increasing sales price.
+# `UFFI IN` and Pool are very close to showing significance.
+# I'll see if they gain significance after removing the insignificant 
+# variables from the model
+
+# Overall, the adjusted R-squared is 0.7173, meaning the model is explaining 
+# 72% of the variation in sales price.
+
+# now, I will remove the variable with the weakest significance (largest p-value)
+# removing `45 Yrs+`... it is no surprise that this is the weakest predictor
+# because most houses in the data are older than 45 years 
+m2 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+`Brick Ext`+
+           `Bsmnt Fin_SF`+`Lot Area`+`Enc Pk Spaces`+`Living Area_SF`+
+           `Central Air`+`Pool`, data = uffi_no_outliers)
+
+summary(m2)  
+
+# the adjusted R-squared improved slightly to 0.7205
+# the significant variables maintained their significance
+# and `Bsmnt Fin_SF` now joined in with being very close
+# to significance
+
+# now removing the weakest predictor again (Lot Area)
+m3 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+`Brick Ext`+
+           `Bsmnt Fin_SF`+`Enc Pk Spaces`+`Living Area_SF`+
+           `Central Air`+`Pool`, data = uffi_no_outliers)
+
+summary(m3)
+# Adjusted R-squared iproved again, to 0.7228
+# `Bsmnt Fin_SF` gained significance and is now a significant
+# predictor variable. `UFFI IN` and Pool are still on the brink
+
+# now removing `Brick Ext`
+m4 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+
+           `Bsmnt Fin_SF`+`Enc Pk Spaces`+`Living Area_SF`+
+           `Central Air`+`Pool`, data = uffi_no_outliers)
+
+summary(m4)
+# the results are the same, with Adjusted R-squared
+# slightly improved again, to 0.725
+# now removing `Central Air`
+
+m5 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+
+           `Bsmnt Fin_SF`+`Enc Pk Spaces`+`Living Area_SF`+
+           `Pool`, data = uffi_no_outliers)
+
+summary(m5)
+# Adjusted R-Squared again improves slightly, to 0.7258
+# `UFFI IN` and Pool are still on the brink but still not significant
+# because they are above 0.05. Since we want `UFFI IN` included in the 
+# model because it is the variable in question in this instance, I 
+# will remove Pool instead, even though its p-value is slightly lower
+# than `UFFI IN`
+
+m6 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+
+           `Bsmnt Fin_SF`+`Enc Pk Spaces`+`Living Area_SF`, 
+         data = uffi_no_outliers)
+
+summary(m6)
+# `UFFI IN` is still not statistically significant, and we will need it to be
+# included in our final ideal model, so I will make a judgement call and remove  
+# the variable that has the next highest p-value after `UFFI IN`. This is
+# `Enc Pk Spaces`. I'll see if this helps make `UFFI IN` significant in the model
+
+m7 <- lm(`Sale Price` ~ `Year Sold`+`UFFI IN`+
+           `Bsmnt Fin_SF` + `Living Area_SF`, data = uffi_no_outliers)
+
+summary(m7)
+
+
+# Yes, `UFFI IN` is now statistically significant, so I will use this as the 
+# final version of the model, since all of the
+# remaining predictor variables are statistically significant and the variable
+# of interest is included. The adjusted R-squared is lower than in the 
+# previous model, but this fits our problem better.
+
+# looking at the coefficients in the final model, `UFFI IN`
+# and `Year Sold` have the strongest effect on Sales Price.
+
+# looking at the RMSE of the model...
+
+# since we already have the model saved, the errors (actual minus predicted) are
+# already calculated for the whole dataset
+# so I can calculate RMSE using that
+
+sqerr <- (m7$residuals)^2
+
+meansqerr <- mean(sqerr)
+
+rmse <- sqrt(meansqerr)
+
+rmse
+# 14555.51
+
+# comparing this to m6...
+sqerrm6 <- (m6$residuals)^2
+
+meansqerrm6 <- mean(sqerrm6)
+
+rmsem6 <- sqrt(meansqerrm6)
+
+rmsem6
+# 14015.98
+
+# the root mean squared error is higher and the adjusted r-squared
+# value is higher in m7 than in m6, but we need `UFFI IN` to be significant,
+# so m7 will be the ideal model for this problem.
+```
+
+After backfitting the model by removing predictor variables one by one based on the highest p-value, the ideal multiple regression model contains the predictor variables `Year Sold`, `UFF IN`, `Bsmnt Fin_SF`, and `Living Area_SF`. Although I had to make a few exceptions during the backfitting, this is the ideal model because I need `UFFI IN` included as a predictor variable in the model and I need it to be statistically significant. This is the best model for this problem, where we are examining UFFI. The formula is:
+
+`Sale Price` = -11,410,000 + 5,707(`Year Sold`) - 8,349(`UFFI IN`) + 17.29(`Bsmnt Fin_SF`) + 52.71(`Living Area_SF`)
+
+The presence of UFFI has the strongest effect on sales price, decreasing it by $8,349. The year sold has the second strongest effect (increasing the sales price by $5,707 for every year added).
+
+
+4)   On average, by how much do we expect UFFI to change the value of a property?
+
+Looking at the summary for m7, the coefficient for `UFFI IN` is 8,349, so UFFI has a negative impact on sales price. Increasing `UFFI IN` 1 unit, from 0 (no UFFI) to 1 (yes UFFI), decreases the sales price by $8,349. So, a house with UFFI should sell for around $8,349 less than a house without UFFI if all other variables are equal. 
+
+
+5)   If the home in question is older than 45 years old, doesn't have a finished basement, has a lot area of 4000 square feet, has a brick exterior, 1 enclosed parking space, 1480 square feet of living space, central air, and no pool, what is its predicted value and what are the 95% confidence intervals of this home with UFFI and without UFFI?
+
+Since my final ideal model only includes four predictor variables, I will ignore the other variables. The only variable not defined in this question is `Year Sold`, but based on the case study information, the home in question was recently purchased. So, I will use the present year (highest year sold in the data set) for this value, which is 2016.
+
+```{r}
+# First, I will create a dataframe with the values for all of the variables
+# in my model
+
+# since I will be prediction both with and without UFFI I will run two separate
+# predictions
+
+# populate the variables with their values
+
+`Year Sold` <- 2016
+`UFFI IN` <- 0
+`Bsmnt Fin_SF` <- 0
+`Living Area_SF` <- 1480
+
+
+without_UFFI <- data.frame(c(`Year Sold`,`UFFI IN`,
+                             `Bsmnt Fin_SF`,`Living Area_SF`))
+
+# use predict function to input these values into the model
+# and predict the sales price based on the model coefficients
+# the model with all of these coefficients is m1
+price_no_UFFI <- predict(m7,without_UFFI)
+
+price_no_UFFI
+# The predicted sales price without UFFI is $171,583.6
+
+
+# now, want to find the 95% confidence interval
+# which is equal to the forecast +/- 1.96 * standard error
+
+# looking at the results of the model, the standard error is 14960
+
+# calculating the confidence interval
+price_no_UFFI - (1.96*14960)
+
+price_no_UFFI + (1.96*14960)
+
+# the 95% confidence interval is 142,262  - 200,905.2 without UFFI
+
+
+# Now do the prediction with UFFI
+
+# update the `UFFI IN` variable to 1
+`UFFI IN` <- 1
+
+with_UFFI <- data.frame(c(`Year Sold`,`UFFI IN`,
+                          `Bsmnt Fin_SF`,`Living Area_SF`))
+
+# predict the sales price
+price_yes_UFFI <- predict(m7,with_UFFI)
+
+price_yes_UFFI
+# The predicted sales price with UFFI is $163,234.5 
+
+
+# the 95% confidence interval
+price_yes_UFFI - (1.96*14960)
+
+price_yes_UFFI + (1.96*14960)
+
+# the 95% confidence interval is 133,912.9 - 192,556.1  with UFFI
+```
+
+The prediction from the regression model without UFFI is $171,583.6 (with a 95% confidence interval of $142,262  - $200,905.2). The prediction with UFFI is $163,234.5 (with a 95% confidence interval of $133,912.9  - $192,556.1). Looking at the predicted sales prices from the regression model, the home would sell for around $8,349 less with UFFI than it would without UFFI. This looks right because that is the coefficient from m7 for the UFFI variable.
+
+
+PROBLEM 3:
+
+1)    Divide the provided Titanic Survival Data into two subsets: a training data set and a test data set. Use whatever strategy you believe it best. Justify your answer.
+
+```{r}
+# load the data
+titanic <- read_csv("C:/Users/gridl/Documents/NEU/Classes/machine_learning/week_9/titanic_data.csv")
+
+# looking into the data
+head(titanic)
+
+str(titanic)
+# 891 records, 12 variables... including an ID variable
+# I want to convert the Sex and Embarked categorica variables to factors
+titanic$Sex <- as.factor(titanic$Sex)
+
+titanic$Embarked <- as.factor(titanic$Embarked)
+
+str(titanic)
+# looks good
+
+# splitting into a training and validation data set...
+# I see it is ordered by PassengerID, so I want to randomly split the data
+# I will take 75% of it for the training data and the remaining for testing
+set.seed(250)
+training_size <- 0.75
+training_index <- sample(titanic$PassengerId, training_size * (length(titanic$PassengerId)),
+                         replace = FALSE)
+titanic_training <- subset(titanic, titanic$PassengerId %in% training_index)
+titanic_validation <- subset(titanic, !(titanic$PassengerId %in% training_index))
+```
+
+2)    Impute any missing values for the age variable using an imputation strategy of your choice. State why you chose that strategy and what others could have been used and why you didn't choose them.
+
+```{r}
+# quantifying how many missing values there are
+count(filter(titanic, is.na(titanic$Age)))
+# 177 total records from the full data set
+
+summary(titanic_training$Age)
+summary(titanic_validation$Age)
+# 130 in the training and 47 in validation data
+
+# a good proportion of the data is missing in this variable (177/891), so
+# we won't want to delete these, because then we'd be losing a lot of 
+# data related to the other variables
+
+# look at a summary of the Age variable 
+summary(titanic$Age)
+# mean = 29.7
+# median = 28
+
+# get a sense of the distribution
+hist(titanic$Age)
+# it's fairly normal, a little bit skewed-right, indicating higher outliers
+
+# investigating durther...
+# looking at mean ages by different categories to see if they are significantly 
+# different and might be a better imputaion than overall mean
+
+# Sex
+titanic %>% 
+  group_by(Sex) %>%
+  summarise(mean_age = mean(Age, na.rm = TRUE), 
+            median_age = median(Age, na.rm = TRUE),
+            count = n())
+# there is a small difference in the mean Age by Sex, 
+# men have an average age more than 2 years older than women
+
+# passenger class
+titanic %>% 
+  group_by(Pclass) %>%
+  summarise(mean_age = mean(Age, na.rm = TRUE), 
+            median_age = median(Age, na.rm = TRUE),
+            count = n())
+# this is even more noticeable, with first class passengers being
+# 13 years older on average than 3rd class and 9 years older than 2nd
+# class, and there are a significant number in each grouping
+# look at class breakdown of NA Age records
+titanic %>% 
+  filter(is.na(Age)) %>%
+  group_by(Pclass) %>%
+  summarise(count = n(), percent = round((count/177)*100,1))
+# over 76% of the missing Age records are third class passengers
+# this is somewhat helpful because the mean age of 3rd class passengers
+# is 4 years younger than the population mean
+
+# Embarking city
+titanic %>% 
+  group_by(Embarked) %>%
+  summarise(mean_age = mean(Age, na.rm = TRUE), 
+            median_age = median(Age, na.rm = TRUE),
+            count = n())
+# no noticeable difference in mean age
+
+# siblings
+titanic %>% 
+  group_by(SibSp) %>%
+  summarise(mean_age = mean(Age, na.rm = TRUE), 
+            median_age = median(Age, na.rm = TRUE),
+            count = n())
+# there's a pretty big variation here... I want to check out the NA age records to see
+# if there's variation with the sibling counts
+titanic %>% 
+  filter(is.na(Age)) %>%
+  group_by(SibSp) %>%
+  summarise(count = n(), percent = round((count/177)*100,1))
+# over 77% of the missing Age records are passengers with 0 siblings,
+# which isn't very helpful, since the mean age of SibSp = 0 is 31, 
+# which is very close to the overall population mean
+
+
+# SO far, Passenger class is the most helpful in determining how 
+# to predict the Age for the missing Age records
+
+
+
+# looking at multiple regression, to see if a good model can be fit to the data
+# this might be a better way to impute the missing records
+
+# start by including predictors of all reliabe variables that seem like 
+# good predictors and see if it is a good fit (for all data that has a known Age)
+titanic_lm1 <- lm(Age ~ Pclass + Sex + SibSp + 
+                    Parch + Embarked, data = filter(titanic, !is.na(Age)))
+summary(titanic_lm1)
+# adjusted R-Squared is very low
+
+# remove Parch
+titanic_lm2 <- lm(Age ~ Pclass + Sex + SibSp + 
+                    Embarked, data = filter(titanic, !is.na(Age)))
+summary(titanic_lm2)
+
+# remove embarked
+
+titanic_lm3 <- lm(Age ~ Pclass + Sex + SibSp, 
+                  data = filter(titanic, !is.na(Age)))
+summary(titanic_lm3)
+
+# the variables are significant, but the model is not a good fit for 
+# the data. The adjusted R-squared is really low, it is not explaining
+# much of the variance in Age.
+
+# regression is not a good method here
+
+
+# since regression produces a model with a really bad fit to the data,
+# I will impute the missing Age records by assigning the mean Age based 
+# on the Pclass variable. This seems appropriate since there is decent 
+# variation amongst the different class groups. It will be better than 
+# just assigning the population mean Age and better than using a regression
+# model (becuase it doesn't produce a good fit to the data).
+
+
+# IMPUTATION
+
+# looking back at the mean by Pclass...
+titanic %>% 
+  group_by(Pclass) %>%
+  summarise(mean_age = round(mean(Age, na.rm = TRUE),0))
+
+# I will assign an Age of 38 to records that have Pclass of 1,
+# 30 where Pclass is 2
+# and 24 where Pclass is 3
+
+# I will do this to the full data set, and then split it up again 
+# to training and testing based on the same sampling
+
+# copy data to new object, to preserve original data
+titanic_clean <- titanic
+
+# impute the age
+# for Pclass 1 records
+titanic_clean[is.na(titanic_clean$Age) & 
+                titanic_clean$Pclass == 1,c("Age")] <- 38 
+  
+titanic_clean[is.na(titanic_clean$Age) & 
+                titanic_clean$Pclass == 2,c("Age")] <- 30
+
+titanic_clean[is.na(titanic_clean$Age) & 
+                titanic_clean$Pclass == 3,c("Age")] <- 24 
+
+
+# make sure there are no more NA Ages
+filter(titanic_clean, is.na(Age))
+# good
+
+
+# now, redo the training/testing split, to have the complete data
+# with imputed ages
+
+set.seed(250)
+#training_size <- 0.75
+training_index <- sample(titanic_clean$PassengerId, training_size * 
+                           (length(titanic_clean$PassengerId)), replace = FALSE)
+titanic_training <- subset(titanic_clean, 
+                           titanic_clean$PassengerId %in% training_index)
+titanic_validation <- subset(titanic_clean, 
+                             !(titanic_clean$PassengerId %in% training_index))
+```
+
+I imputed the missing Age values in the dataset by using the average age for the passenger class that they belong to. See comments in coding for reasoning. I looked at the mean ages for all categories and found the Pclass variable to have more variance than the others, which made it a better option than using the overall population mean Age. I chose this method over deleting the records with missing Age data because a fairly large portion of the data is missing Age data (20%), so deleting would mean ignoring a lot of valuable data for the other variables that might have predictive power. I also examined multiple regression as an imputation method, but the model was not a good fit for the data, so predicting age would not be reliable with this method. I decided against using kNN to impute becuase that is very computationally intensive, requiring a lot of tuning to identify the appropriate k and requiring the algorithm to be adjusted because the missing values variable is continuos, so I would need to take the average of all the neighbors instead of the mode. 
+
+
+3)    Construct a logistic regression model to predict the probability of a passenger surviving the Titanic accident. Test the statistical significance of all parameters and eliminate those that have a p-value > 0.05 using stepwise backward elimination.
+
+```{r}
+# before building the model, I will see if any other cleaning needs done
+
+
+# For the predictor variables, I will ignore "PassengerID", "Name", 
+# "Ticket", and "Cabin" because they are unique for each record
+
+# check for other missing values
+colSums(is.na(titanic_clean))
+# Embarked has 2 missing values... remove them
+titanic_clean <- filter(titanic_clean, !is.na(Embarked))
+
+# I will need to use dummy codes for Sex and Embarked, because they're
+# categorical
+
+# create a "Sex_Male" variable, and have it be 1 if male, 0 if female
+# and create two new variables since there are three possible levels
+# of the variable, "Embarked_S" and "Embarked_Q"... Embarked values of C
+# will be a 0 for each of those columns
+
+titanic_clean_dummy <- titanic_clean %>%
+  mutate(Sex_Male = ifelse(Sex == "male", 1, 0),
+         Embarked_S = ifelse(Embarked == "S", 1, 0),
+         Embarked_Q = ifelse(Embarked == "Q", 1, 0))
+
+# look at the variables to see if it looks right
+head(titanic_clean_dummy[c("Sex","Sex_Male","Embarked", 
+                      "Embarked_S", "Embarked_Q")])
+# great, it worked
+
+# look at the correlations, collinearities and distributions
+pairs.panels(titanic_clean_dummy[c("Survived","Pclass","Age","SibSp",
+                                   "Parch","Fare","Sex_Male","Embarked_S",
+                                   "Embarked_Q")])
+
+# "Sex_Male" and "Pclass" have the storngest correlations with "Survived",
+# so I expect them to be strong predictor variables
+
+# the distribution of Fare might need a transform if it shows any significance
+# will run as is for now
+
+# now resplit the data into training/test based on the same method
+# as before
+
+set.seed(250)
+#training_size <- 0.75
+training_index <- sample(titanic_clean_dummy$PassengerId, training_size * 
+                           (length(titanic_clean_dummy$PassengerId)), replace = FALSE)
+titanic_training <- subset(titanic_clean_dummy, 
+                           titanic_clean_dummy$PassengerId %in% training_index)
+titanic_validation <- subset(titanic_clean_dummy, 
+                             !(titanic_clean_dummy$PassengerId %in% training_index))
+
+# now build the full logistic regression model
+glm1 <- glm(Survived ~ Pclass + Age + SibSp + Parch + 
+              Fare + Sex_Male + Embarked_S + Embarked_Q, 
+            data = titanic_training, family =binomial)
+
+# looking at the summary to see significance of predictors
+summary(glm1)
+# multiple variables are not statistically significant, 
+# so will backfit using the p-value to eliminate
+# insignificant variables one by one until only
+# significant variables remain in the model
+
+# remove "Fare" because it has the highest p-value... don't need to worry
+# about transforming it
+glm2 <- glm(Survived ~ Pclass + Age + SibSp + Parch + 
+              Sex_Male + Embarked_S + Embarked_Q, 
+            data = titanic_training, family =binomial)
+
+summary(glm2)
+
+# now remove Parch 
+glm3 <- glm(Survived ~ Pclass + Age + SibSp + 
+              Sex_Male + Embarked_S + Embarked_Q, 
+            data = titanic_training, family =binomial)
+summary(glm3)
+
+# now remove both Embarkeds
+glm4 <- glm(Survived ~ Pclass + Age + SibSp + Sex_Male, 
+            data = titanic_training, family =binomial)
+
+summary(glm4)
+# this is the final model, all remaining variables are statistically significant 
+```
+
+
+4)    State the model as a regression equation.
+
+According to the binomial logistic regression equation of:
+
+$$ P(Y)\ =\ {\frac{1}{1+e^{-(\alpha + \beta_{1}X_{1}+\beta_{2}X_{2}+...\beta_{k}X_{k})}}}$$
+
+the regression equation for my model is:
+
+$$ P(Survived)\ =\ {\frac{1}{1+e^{-(5.21\ -\ 1.21(Pclass)\ -\ 0.04(Age)\ -\ 0.43(SibSp)\ -\ 2.53(Sex\_Male))}}}$$
+
+
+5)    Test the model against the test data set and determine its prediction accuracy (as a percentage correct).
+
+```{r}
+# run the test data set through the model to get a probability of
+# survival prediction for each record
+titanic_predictions <- predict(glm4, titanic_validation, type = "response")
+
+# I will first create a data frame of the predictions 
+titanic_predictions_eval <- data.frame(survival_prob = titanic_predictions)
+
+# now add a column with the predicted classification, 
+# using a threshold of 50%
+# anything under 50% probability will be classified as 0
+# anything above 50% will be classified as 1
+titanic_predictions_eval <- mutate(titanic_predictions_eval, 
+                     predicted_class = ifelse(survival_prob<0.5,0,1))
+
+# now count the accurate predictions from the model by comparing actual vs predicted
+sum(titanic_validation$Survived == titanic_predictions_eval$predicted_class)
+# there are 188 correct predictions out of the 223 total records
+
+# accuracy of model
+sum(titanic_validation$Survived == titanic_predictions_eval$predicted_class)/
+  count(titanic_validation)
+# 84% accuracy
+```
+
+The model predicted 84% of the cases from the test data set correctly. 
+
+
+
+PROBLEM 4:
+
+1)    Elaborate on the use of kNN and Naive Bayes for data imputation. Explain in reasonable detail how you would use these algorithms to impute missing data and why it can work.
+
+Since kNN is a classification algorithm, it is typically used for classifying categorical variables but if the algorithm is altered, it can also be used on continuous variables. kNN does require that a reasonable number of the other variables in the data set be numeric, because it calculates the distance between the record in question and all other records. kNN is used for categorical classification by taking the mode of the k nearest neighbors (the k smallest distances that were calculated). It can be used for continuous variables by calculating the mean value of the k nearest neighbors. So, kNN can be used to impute missing data by identifying the k closest neighbors, then looking at the variable in question for those neighbors and either taking the mode or the mean, depending on the data type. It woud be a good imputation method because it is finding similar instances in the data and making an educated classification based on that.
+
+Naive Bayes works best for the opposite scenario, when the variables in the data set that are being used as predictors for the missing variable are categorical rather than numeric. Naive Bayes could be used for imputation if there were missing data in a binary variable. The Naive Bayes algorithm could use the liklihood table to find the conditional probabilities of the other variable values in the record from the data set and then calculate the probability of the missing binary variable belonging to one of the two classes using the Bayes theorem. A threshold value could then be used to assign the missing value to one of the two classes base don that calculated probability.
+
+
+
+
+
+
+
+
