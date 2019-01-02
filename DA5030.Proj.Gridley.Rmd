@@ -1,0 +1,1894 @@
+---
+title: "DA5030 - Final Project - Fall 2018"
+author: "Brian Gridley"
+date: "December 8, 2018"
+output: pdf_document
+---
+
+
+
+$$\Large{\textbf{Predicting Boston Airbnb Prices}} $$
+
+
+$$\textbf{Phase 1: Business Understanding}$$
+
+Airbnb is an online short-term housing rental service, where users can rent space in a home for as short as one night's stay. The short-term rental service is creating a lot of drama surrounding its impact on local neighborhoods, particularly in high demand real estate markets. People claim it is reducing the stock of housing units available for residents by turning them into short-term hotel-style investment units. Boston has already imposed regulations to limit the impact this service will have on the city's housing market and many other cities are considering following a similar path. 
+
+This project aims to understand the drivers behind the pricing of listing on this service. To achieve this, I will examine a dataset containing the price and identifying characteristics for Airbnb listings across the entire city of Boston. I will build three different machine learning models in R (multiple linear regression, neural network, and k nearest neighbor) to predict the price of a listing given its characteristics. All steps of the CRISP-DM process will be followed. This will involve collecting and exploring the data, preparing the data for modeling by cleaning/formatting/transforming it, building and testing the three different prediction models, evaluating the results of the models and comparing the accuracies between the models.
+
+
+
+$$\textbf{Phase 2: Data Understanding}$$
+
+The data was downloaded as a CSV file from Kaggle.com (the "listings.csv" file located at the following link: https://www.kaggle.com/airbnb/boston?login=true#listings.csv). It contains data related to Airbnb listings across Boston. Because Airbnb does not have an API or release its data, it was scraped from the Airbnb website. Here, I will download the data, explore the data and examine the quality for potential issues.
+
+```{r}
+# Import the data
+library(tidyverse)
+# I am importing it with the read_csv() function from the tidyverse 
+# package, which automatically imports strings not as factors
+
+listings <- as.data.frame(read_csv("listings.csv"))
+
+#head(listings)
+# looks like it imported correctly
+
+# take a look at the structure of the dataset
+str(listings)
+# there are 3,585 records and 95 columns
+
+# Looking at the variables, they are a mixture of character, numeric, and date variables.
+# The data includes the price of each individual unit (our response variable), full text 
+# descriptions of the unit, neighborhood details, unit and listing details, host details, 
+# and review scores.
+
+# a lot of the variables are not useful for this analysis and will be excluded from the analysis
+
+# look at a summary of the full dataset
+summary(listings)
+# This is a lot of information to take in with all variables included, but a few interesting
+# things can be noticed from this... 
+
+#    - The "host_since" field is a date that tells how long the host of the unit has been hosting.
+#       This can probably be converted into a numeric variable, as a measure of the total time.
+
+#    - A lot of the character fields actually represent a number and will have to be cleaned up
+#      and converted (such as "host_response_rate", "host_acceptance_rate", "zipcode", 
+#      "price", and "cleaning_fee").
+
+#    - There appear to be categorical variables that are in character format now that can be 
+#      converted to dummy variables that may be useful predictors (such as "host_is_superhost", 
+#      "neighborhood", "property_type", "room_type", and "bed_type"). I will explore these 
+#      further during cleansing stage.
+
+#    - The "square_feet" variable appears to be useless although it would have been a valuable 
+#      predictor variable. It has 3,529 NA values out of the 3,585 records, so imputation would be 
+#      close to impossible since there is no data to use for that.
+
+#    - most of the other numeric variables that may be used have a much lower number of NA records
+#      so data imputation will be done.
+
+#    - Maybe the most valuable information is that there is no date field, and the listing data 
+#      appears to be a snapshot of listings from one day (the "last_scraped" field is the same day 
+#      for all records). This is great news for the prediction models because there will not be
+#      seasonality in the price data, so no additional preprocessing will need to be done to  
+#      account for that.
+
+#    - The range of the numeric variables all vary quite widely, so data transforms will be needed  
+#      to convert to similar scales.
+
+# I will explore the data further in the next section, I will need to clean it to get it into a 
+# workable format before examining the distributions, outliers, collinearity, and correlations in 
+# more detail.
+
+```
+
+After examining the data, there is a lot of pre-processing work that will need to be done in the next step in order to prepare the data for modeling and examine the data further. First there is re-formatting that is needed. After the data is formatted appropriately (mainly converting numeric fields to numeric format), I can further examine the distributions to continue the data understanding phase. Also, there are missing values that will need to be dealt with through imputation and deletion, transforms are needed, and variables will need to be dummy coded. There do appear to be a good number of potentially valuable predictor variables that can be used in the models after the data is cleansed. Although the data requires a good amount of cleansing and pre-processing, I would say it is high quality data that may provide useful prediction models.
+
+
+$$\textbf{Phase 3: Data Preparation}$$
+
+In this stage, I will need to select the attributes to use in the modeling, re-format certain variables to make it usable, create dummy codes for categorical variables, re-examine the data to better understand it, impute missing values, and re-scale the data. The neural network and kNN algoithms require data on a small scale, so I will min/max normalize the features, to bring within a range between 0 and 1.
+
+```{r}
+# SELECT FEATURES TO BE USED
+
+# First, I want to select the features that will be useful for the prediction models
+# then I will move on to the cleansing 
+#head(listings)
+
+
+# I will keep the "id" field for now, as it might come in handy when checking for duplicate
+# records and splitting data into training and testing sets
+
+# To avoid any unecessary and complicated text analysis, I will not be using any of the descriptive 
+# text fields that provide detailed descriptions of the listings, units, hosts, or neighborhoods. 
+# I will stick to the numeric and categorical variables.
+
+# Looking into a few fields that may be of interest before deciding to delete or keep...
+
+# Checking unique records in the "experiences_offered" field
+listings %>%
+  group_by(experiences_offered) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# this field is useless...
+
+# look at host_location field
+head(listings %>%
+  group_by(host_location) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)))
+# I will keep this field and recode it... there is useful information here,
+# I will bin the data and turn this into a binary variable ("Local Host") which will be TRUE if 
+# in Massachusetts and FALSE if outside of Massachusetts. It might be a good predictor of price.
+
+# neighbourhood_cleansed
+listings %>%
+  group_by(neighbourhood_cleansed) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# There are 25 different neighborhoods. This is too many to be used as a categorical variable,
+# as it would require 24 dummy variables... I'll look into the "zipcode" field instead 
+
+
+# zipcode
+listings %>%
+  group_by(neighbourhood_cleansed) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# Again, way too many to be used categorically... and although it's a numeric variable,
+# it technically shouldn't used as a predictor in that way because an increase in zipcode 
+# has no meaning.
+
+# However, I would like to use a location variable in the model because it should be a good  
+# predictive variable. If there were fewer neighborhood or zipcode unique values, I could use 
+# the appropriate method and create dummy variables with a 0 or 1 for each neighborhood. If  
+# there was a distance to city center field or distance to public transit field, that could 
+# be used numerically. Unfortunately, the data doesn't offer either of those options, so I will 
+# use the "zipcode" field as a proxy for location by using it numerically. I will note that it is 
+# important to recognize that an increase in zipcode has no real meaning and should not be used 
+# when examining the effect on price. Rather, the zipcode field will just be used to  see if a 
+# change in zipcode is significant in regards to the listing price (which I expect it to be).
+
+# property_type
+listings %>%
+  group_by(property_type) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# This could be useful but it would require a lot of dummy coding.. 13 uniques values
+
+# room_type
+listings %>%
+  group_by(room_type) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# This might be a better predictor variable than "property_type", so I will keep this variable, 
+# creating dummy variables and will exclude "property_type".
+
+# bed_type
+listings %>%
+  group_by(bed_type) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+# This seems like it will be very similar in predictive value to room_type, 
+# so I will just use room_type
+
+
+# after reviewing each column, I selected the features that I want to keep for my prediction 
+# analysis based on personal judgement about their relevance to predicting price of a listing 
+# (the data mining goal), based on the data type (removing any long text variables that cannot 
+# be converted to useful variables), and based on data quality (as mentioned earlier, although 
+# square feet would be a great predictor variable, I will not use it because there are too many 
+# NA values... there is poor data quality).
+
+# Now I will bring all of the records for the variabes of interest into a new table
+listings_narrow <- listings %>%
+  select(c("id","price","host_since","host_location","host_acceptance_rate",
+           "calculated_host_listings_count","zipcode","room_type","accommodates",
+           "bathrooms","beds","security_deposit","cleaning_fee","guests_included",
+           "minimum_nights","maximum_nights","number_of_reviews","review_scores_rating"))
+
+head(listings_narrow)
+
+
+
+
+# CLEAN THE DATA 
+# ... INCLUDING BINNING AND DUMMY CODING WHERE APPROPRIATE
+
+# There is a lot of work that is needed to make the data workable
+
+# I will look at each variable individually and determine how to clean it... looking at whether
+# it needs to be converted to a different data type and whether it needs to be 
+# re-binned and turned into dummy variables.
+
+# Price... 
+
+# It is in character format, with a preceding '$' in each record. I want to convert this to a  
+# numeric field for analysis
+
+# bring all of the listings_narrow data into a new dataframe to preserve the original data
+listings_narrow_clean <- listings_narrow
+
+head(listings_narrow_clean$price)
+
+# Take out the '$' sign and convert to numeric
+listings_narrow_clean$price <- as.numeric(gsub("\\$","",listings_narrow_clean$price))
+
+summary(listings_narrow_clean$price)
+# good, I will explore this data more and impute the NA values later
+
+
+# 'host_since' field... it is a date, I want to convert it to a numeric field representing the  
+# time interval (in years) for how long the host has been active on Airbnb, by calculating the  
+# difference between the date this data was pulled (which is found in the original file in the 
+# last_scraped field) and the date of the 'host_since' field
+
+summary(listings$last_scraped)
+# the date the data was pulled was "2016-09-07", so I will calculate the time between "2016-09-07" 
+# and the 'host_since' field
+
+summary(listings_narrow_clean$host_since)
+
+# using the difftime function, but it only goes to up to "weeks" unit, so I will calculate the 
+# years from there
+listings_narrow_clean$host_since <- as.numeric(difftime(as.Date("2016-09-07"), 
+                                                        as.Date(listings_narrow_clean$host_since), 
+                                                        units = "weeks"))/52
+
+summary(listings_narrow_clean$host_since)
+
+# 'host_location' field... as mentioned earlier, I will convert this into a binary field,
+# 'host_local' identifying whether the host lives within Massachusetts ("1") or outside ("0")
+
+# look at the unique records again
+head(listings_narrow_clean %>%
+  group_by(host_location) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)))
+
+# they are in the format "city, state, country", so I will search for the word "Massachusetts"
+# in each record and code that as a 1
+
+listings_narrow_clean$host_location <- as.numeric(str_detect(listings_narrow_clean$host_location,
+                                                             "Massachusetts"))
+
+# rename the column to "host_local"
+colnames(listings_narrow_clean)[4] <- "host_local_yes"
+
+head(listings_narrow_clean)
+# good
+
+summary(listings_narrow_clean$host_local)
+# the NA values will be handled later after all data is cleaned
+
+
+# 'host_acceptance_rate' field... I want to convert this into a numeric field
+# I need to remove the '%' and convert to numeric
+listings_narrow_clean$host_acceptance_rate <- as.numeric(gsub("\\%","",
+                                              listings_narrow_clean$host_acceptance_rate))
+
+
+# calculated_host_listings_count... this field is okay as is, no cleaning needed
+summary(listings_narrow_clean$calculated_host_listings_count)
+# there is a clear right-skew in the distribution, which I will address later
+
+# zipcode... as mentioned earlier, this will be used numerically and as a location proxy.
+# I will convert it to numeric format
+listings_narrow_clean$zipcode <- as.numeric(listings_narrow_clean$zipcode)
+
+summary(listings_narrow_clean$zipcode)
+# there are NA values, which will be addressed later
+
+
+# room_type... as mentioned earlier, I will create dummy variables for this variable
+
+# There are 3 unique values, so I will create 2 dummy variables... "Entire home/apt" and 
+# "Private room"
+
+# create the dummy variables
+listings_narrow_clean <- listings_narrow_clean %>%
+  mutate(room_type_Entire_home_apt = ifelse(room_type == "Entire home/apt", 1, 0),
+         room_type_Private_room = ifelse(room_type == "Private room", 1, 0)) 
+
+# verify counts are accurate
+listings_narrow_clean %>%
+  group_by(room_type) %>%
+  summarise(count = n())
+# there are 2127 "Entire home/apt" and 1378 "Private room"
+
+sum(listings_narrow_clean$room_type_Entire_home_apt)
+# 2127
+sum(listings_narrow_clean$room_type_Private_room)
+# 1378
+
+# that's correct
+# now remove the room_type field
+listings_narrow_clean <- listings_narrow_clean[,-8]
+
+
+# accommodates... this field is okay, no cleaning needed
+summary(listings_narrow_clean$accommodates)
+
+
+# bathrooms... this field is okay, no cleaning needed
+summary(listings_narrow_clean$bathrooms)
+# NA values will be dealt with later
+
+
+# beds... this field is okay, no cleaning needed
+summary(listings_narrow_clean$beds)
+# NA values will be dealt with later
+
+
+# security_deposit... this is a character field representing numeric data, however, I am  
+# not interested in the numeric information. I am only interested in whether there is a  
+# security deposit or not. There are 2243 NA values, so a lot of listings do not require 
+# a security deposit. I would like to test whether requiring a security deposit is a 
+# significant predictor of price. So I will convert this into a binary variable, where if 
+# the value is NA it equals 0 and if not NA it equals 1
+head(listings_narrow_clean %>%
+  group_by(security_deposit) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)))
+# 2243 NA records
+
+# convert to binary field
+listings_narrow_clean$security_deposit <- 
+  as.numeric(ifelse(is.na(listings_narrow_clean$security_deposit),0,1))
+
+# check counts
+sum(listings_narrow_clean$security_deposit == 0)
+# 2243... this is correct
+
+# rename column
+colnames(listings_narrow_clean)[11] <- "security_deposit_yes"
+
+
+# cleaning_fee... I will do the same thing for this field
+head(listings_narrow_clean %>%
+  group_by(cleaning_fee) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)))
+# 1107 NA records
+
+# convert to binary field
+listings_narrow_clean$cleaning_fee <- 
+  as.numeric(ifelse(is.na(listings_narrow_clean$cleaning_fee),0,1))
+
+# check counts
+sum(listings_narrow_clean$cleaning_fee == 0)
+# 1107 this is correct
+
+# rename column
+colnames(listings_narrow_clean)[12] <- "cleaning_fee_yes"
+
+
+# guests_included... this field is okay, no cleaning needed
+summary(listings_narrow_clean$guests_included)
+
+
+# minimum_nights... this field is okay, no cleaning needed
+summary(listings_narrow_clean$minimum_nights)
+
+
+# maximum_nights... this field is okay, no cleaning needed
+summary(listings_narrow_clean$maximum_nights)
+# the max number appears to be an outlier, which I will address later
+
+
+# number_of_reviews...this field is okay, no cleaning needed
+summary(listings_narrow_clean$number_of_reviews)
+# the distribution appears to be right-skewed, which will be addressed later
+
+
+# review_scores_rating... this field is okay, no cleaning needed
+summary(listings_narrow_clean$review_scores_rating)
+# the NA values will be addressed later
+
+
+# now every column in the data has been cleaned/re-formatted if necessary, 
+# I now want to explore it a bit further, to verify everything is okay
+
+
+# Back to re-examining the data fields, now that they are cleanly formatted
+
+str(listings_narrow_clean)
+# the structure looks good now, NA values will need to be addressed through imputation
+# and transforms will be needed since the ranges vary widely
+
+# check that all records are unique, using the 'id' variable
+count(listings_narrow_clean %>%
+        group_by(id) %>%
+        summarise(count = n()))
+# 3585... this is the total number of records in the data, so they are all unique. 
+# No duplicates  
+
+
+
+
+
+
+# OUTLIER DETECTION
+
+
+# identifying and removing outliers
+
+
+# I will run a 'for loop' to detect and compile all outliers for the non-binary numeric 
+# variables
+
+# create vector of the column names I want to check in the loop 
+columns <- c("price", "host_since", "host_acceptance_rate", 
+              "calculated_host_listings_count", "accommodates", "bathrooms",
+              "beds", "guests_included", "minimum_nights", "maximum_nights",
+              "number_of_reviews","review_scores_rating")
+
+
+# create a dataframe with the appropriate headings, which I will compile each iteration
+# of the loop into
+outliers_total <- head(listings_narrow_clean,1)
+
+outliers_total <- outliers_total[-1,]
+
+
+# run the loop... identifying outliers for each variable by z-score, and compiling them 
+# into that dataframe I will detect and compile records that have a z-score greater than 
+# 3 or less than -3... the standard
+for (i in 1:12) {
+  temp_outliers <- filter(mutate(listings_narrow_clean, 
+              zscore = (c(listings_narrow_clean[,columns[i]])-
+              mean(c(listings_narrow_clean[,columns[i]]), na.rm = TRUE))
+              /sd(c(listings_narrow_clean[,columns[i]]), na.rm = TRUE)), abs(zscore) > 3)
+  outliers_total <- rbind(outliers_total, temp_outliers)
+}
+
+
+# check to make sure it worked
+head(outliers_total)
+# looks good
+
+# count the number of outliers
+count(outliers_total)
+# 674 total outliers... this is a lot, but there may be duplicates since each column was 
+# checked separately
+
+# look at unique outliers
+count(outliers_total %>%
+  group_by(id) %>%
+  summarise(count = n()))
+# there are 555 unique records from the data that have outliers... 
+# this is quite a lot. I would rather not remove this much data... 
+# it's around 15% of the data
+
+# I will raise the z-score threshold to see if I can retain more data
+
+# run the loop, identifying outliers as above a zscore of 4.5 or below -4.5
+
+# clear the outliers_total dataframe
+outliers_total <- head(listings_narrow_clean,1)
+
+outliers_total <- outliers_total[-1,]
+
+
+# run the loop again...
+for (i in 1:12) {
+  temp_outliers <- filter(mutate(listings_narrow_clean, 
+              zscore = (c(listings_narrow_clean[,columns[i]])-
+              mean(c(listings_narrow_clean[,columns[i]]), na.rm = TRUE))
+        /sd(c(listings_narrow_clean[,columns[i]]), na.rm = TRUE)), abs(zscore) > 4.5)
+  outliers_total <- rbind(outliers_total, temp_outliers)
+}
+
+# check it again
+head(outliers_total)
+
+# count 
+count(outliers_total)
+# 150
+
+# look at unique outliers
+count(outliers_total %>%
+  group_by(id) %>%
+  summarise(count = n()))
+# 133 outliers, this is much better. I'll use this threshold and delete these records 
+# before moving on to modeling
+
+
+# remove the outliers... bringing into new data frame to preserve full clean data frame 
+# using the unique identifier field to identify each record to exclude
+listings_narrow_clean_no_outliers <- filter(listings_narrow_clean, !(id %in% outliers_total$id))
+
+# check appropriate number of records was removed
+count(listings_narrow_clean) - count(listings_narrow_clean_no_outliers)
+# 133, that's correct
+
+
+# Good, now the data is clean with extreme outliers removed
+
+
+
+# EXPLORATORY PLOTS
+
+# look at distributions of the numeric variables... with pairs.panels chart
+library(psych)
+
+pairs.panels(listings_narrow_clean_no_outliers[c("price", "host_since", 
+                        "host_acceptance_rate", "calculated_host_listings_count", 
+                        "accommodates", "bathrooms", "beds", "guests_included", 
+                        "minimum_nights", "maximum_nights", "number_of_reviews",
+                        "review_scores_rating")])
+
+# the price field looks okay, with a relatively normal distribution,
+# but I'll see if a transform would improve it a lot
+
+# original distribution
+hist(listings_narrow_clean_no_outliers$price)
+# it is a little right-skewed even with outliers removed
+# does a log transform improve it?
+hist(log10(listings_narrow_clean_no_outliers$price))
+# not perfect, maybe a little better
+# look at sqrt transform
+hist(sqrt(listings_narrow_clean_no_outliers$price))
+# same, but I will keep it as the original data without a transform, 
+# as it is relatively normal
+
+
+# host_since
+hist(listings_narrow_clean_no_outliers$host_since)
+# this is relatively normal, will keep as is
+
+# host_acceptance_rate
+hist(listings_narrow_clean_no_outliers$host_acceptance_rate)
+# skewed left
+# does log transform help?
+hist(log10(listings_narrow_clean_no_outliers$host_acceptance_rate))
+# not really... what about sqrt transform?
+hist(sqrt(listings_narrow_clean_no_outliers$host_acceptance_rate))
+# no transforms will improve it, so leave as is
+
+# calculated_host_listings_count
+hist(listings_narrow_clean_no_outliers$calculated_host_listings_count)
+# skewed right
+# does log transform help?
+hist(log10(listings_narrow_clean_no_outliers$calculated_host_listings_count))
+# not really... what about sqrt transform?
+hist(sqrt(listings_narrow_clean_no_outliers$calculated_host_listings_count))
+# no transforms will improve it, so leave as is
+
+# accommodates
+hist(listings_narrow_clean_no_outliers$accommodates)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$accommodates))
+hist(sqrt(listings_narrow_clean_no_outliers$accommodates))
+# I will keep it as is
+
+# bathrooms
+hist(listings_narrow_clean_no_outliers$bathrooms)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$bathrooms))
+hist(sqrt(listings_narrow_clean_no_outliers$bathrooms))
+# I will keep it as is, transform doesn't improve
+
+# beds
+hist(listings_narrow_clean_no_outliers$beds)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$beds))
+hist(sqrt(listings_narrow_clean_no_outliers$beds))
+# I will keep it as is, transform doesn't improve
+
+# guests_included
+hist(listings_narrow_clean_no_outliers$guests_included)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$guests_included))
+hist(sqrt(listings_narrow_clean_no_outliers$guests_included))
+# I will keep it as is, transform not a huge improvement
+
+# minimum_nights
+hist(listings_narrow_clean_no_outliers$minimum_nights)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$minimum_nights))
+hist(sqrt(listings_narrow_clean_no_outliers$minimum_nights))
+# I will keep it as is, transform doesn't improve
+
+# maximum_nights
+hist(listings_narrow_clean_no_outliers$maximum_nights)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$maximum_nights))
+hist(sqrt(listings_narrow_clean_no_outliers$maximum_nights))
+# keep as is
+
+# number_of_reviews
+hist(listings_narrow_clean_no_outliers$number_of_reviews)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$number_of_reviews))
+hist(sqrt(listings_narrow_clean_no_outliers$number_of_reviews))
+# I will keep it as is, transforms don't really improve it
+
+# review_scores_rating
+hist(listings_narrow_clean_no_outliers$review_scores_rating)
+# look at transforms
+hist(log10(listings_narrow_clean_no_outliers$review_scores_rating))
+hist(sqrt(listings_narrow_clean_no_outliers$review_scores_rating))
+# I will keep it as is, transforms don't help
+
+
+# after looking into possible transforms, it looks like they will not improve
+# much, so I will leave the data as is without any transforms
+
+
+
+
+# IMPUTATION
+
+# Now I want to impute the missing values now that outliers are removed and won't affect
+# imputed values
+summary(listings_narrow_clean_no_outliers)
+# 7 of the variables have missing values
+
+# price, host_local_yes, host_acceptance_rate, zipcode, 
+# bathrooms, beds, review_scores_rating
+
+# investigate imputation methods
+
+# price variable
+
+# look at overall average
+mean(listings_narrow_clean_no_outliers$price, na.rm = TRUE)
+
+# look at average by number of beds, which seems an appropriate price grouping
+listings_narrow_clean_no_outliers %>%
+  group_by(beds) %>%
+  summarise(avg = mean(price, na.rm = TRUE), count = n())
+# it varies widely... this is a better way to impute
+
+# I could also impute by using the kNN algorithm or with multiple regression, to take 
+# all variables into account and predict the missing values, but it looks like enough 
+# information can be taken from the other variables through grouping or through 
+# judgement calls
+
+
+listings_narrow_clean_no_outliers %>%
+  filter(is.na(price)) %>%
+  group_by(beds) %>%
+  summarise(count = n())
+# there are 9 missing values... with values of 1,2, and 5 for # beds
+
+# impute by using the mean rounded price by # of beds
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$price) & 
+                listings_narrow_clean_no_outliers$beds == 1,c("price")] <- 129
+
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$price) & 
+                listings_narrow_clean_no_outliers$beds == 2,c("price")] <- 207
+ 
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$price) & 
+                listings_narrow_clean_no_outliers$beds == 5,c("price")] <- 291
+
+
+# host_local_yes variable
+
+# this is binary, look at overall counts
+listings_narrow_clean_no_outliers %>%
+  group_by(host_local_yes) %>%
+  summarise(count = n())
+# 2566 '1' values... 75% of the data
+# 10 NA values
+
+# since nothing in the data seems really indicative of a host being local or not, 
+# I will assign the NA values as '1' because it is the most common value
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$host_local_yes),
+                                  c("host_local_yes")] <- 1
+
+
+# host_acceptance_rate variable
+
+# look into groupings
+listings_narrow_clean_no_outliers %>%
+  group_by(beds) %>%
+  summarise(avg = mean(host_acceptance_rate, na.rm = TRUE), count = n())
+# this has no variation
+
+
+listings_narrow_clean_no_outliers %>%
+  group_by(host_local_yes) %>%
+  summarise(avg = mean(host_acceptance_rate, na.rm = TRUE), count = n())
+# this has pretty good variation, I will use this for imputation
+
+
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$host_acceptance_rate) & 
+                listings_narrow_clean_no_outliers$host_local_yes == 0,
+                                  c("host_acceptance_rate")] <- 75
+
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$host_acceptance_rate) & 
+                listings_narrow_clean_no_outliers$host_local_yes == 1,
+                                  c("host_acceptance_rate")] <- 87
+
+
+# zipcode variable
+
+# for this, I will assign the zipcode that occurs the most often
+ # identify the most common zipcode
+head(listings_narrow_clean_no_outliers %>%
+  group_by(zipcode) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)),1)
+# zipcode = 2116
+
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$zipcode),
+                                  c("zipcode")] <- 2116
+
+
+# bathrooms variable
+
+# number of beds should be a good indicator
+listings_narrow_clean_no_outliers %>%
+  group_by(beds) %>%
+  summarise(avg = mean(bathrooms, na.rm = TRUE), count = n())
+
+# look at beds values of missing bathrooms records 
+c(listings_narrow_clean_no_outliers %>%
+  filter(is.na(bathrooms)) %>%
+  select(beds))
+# they are all NA, 1, or 2
+
+# according to the previous table, they will all most likely have 1 bathroom
+
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$bathrooms),
+                                  c("bathrooms")] <- 1
+
+
+# beds variable
+
+# look at overall distribution first
+listings_narrow_clean_no_outliers %>%
+  group_by(beds) %>%
+  summarise(count = n())
+# the vast majority have 1 or 2 beds... 9	NA values
+
+# can # bathrooms provide a good indicator?
+listings_narrow_clean_no_outliers %>%
+  group_by(bathrooms) %>%
+  summarise(avg = mean(beds, na.rm = TRUE), count = n())
+
+# this looks okay, look at the bathroom values for NA bed records
+c(listings_narrow_clean_no_outliers %>%
+  filter(is.na(beds)) %>%
+  select(bathrooms))
+# they all have 1 bathroom
+
+# I will impute them as 1 bed
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$beds),
+                                  c("beds")] <- 1
+
+
+# review_scores_rating variable
+
+# since this is a subjective rating by the customer, dependng on their experience, 
+# I don't think there are any variables that will help with imputation here
+# so I will assign the average rating
+mean(listings_narrow_clean_no_outliers$review_scores_rating, na.rm = TRUE)
+# will impute as 92, since this is an integer field
+
+listings_narrow_clean_no_outliers[is.na(listings_narrow_clean_no_outliers$review_scores_rating),
+                                  c("review_scores_rating")] <- 92
+
+
+# now check to make sure there are no NA values in the data
+summary(listings_narrow_clean_no_outliers)
+# looks good
+
+
+
+# CORRELATION/COLLINEARITY
+
+# investigating the pairwise correlations, before moving onto modeling
+cor(listings_narrow_clean_no_outliers[c("price", "host_since", "host_local_yes",
+                                        "host_acceptance_rate", "calculated_host_listings_count",
+                                        "zipcode", "accommodates", "bathrooms", "beds", 
+                                        "security_deposit_yes", "cleaning_fee_yes", 
+                                        "guests_included", "minimum_nights", "maximum_nights", 
+                                        "number_of_reviews", "review_scores_rating", 
+                                        "room_type_Entire_home_apt", "room_type_Private_room")])
+
+# looking at the crrelations that price has with the other variables in this chart,
+# I expect 'accommodates', 'beds', and 'room_type_Entire_home_apt' to have the 
+# strongest positive impact on price, while 'room_type_Private_room' should have a 
+# fairly strong negative impact on price. The other correlations don't suggest much 
+# of a relationship
+
+
+# looking at collinearity of the full data set
+
+# There are too many variables to create a legible pairs.panel plot. 
+# Looking into the correlations between predictor variables in the prvious chart,
+# I can see that there is a high correlation between 'beds' and 'accommodates' (0.80),
+# which makes perfect sense. 
+
+# With this in mind, I will remove the 'beds' variable from my modeling,
+# and just include 'accommodates'.
+
+# I will bring the data (minus the 'beds' field) into a new dataframe that I will then normalize
+listings_normalized <- listings_narrow_clean_no_outliers[,-10]
+
+
+
+
+# NORMALIZE FEATURES
+
+# Now want to scale the numeric variables to get them closer to zero
+# for a smaller interval. Both the kNN and neural network algorithms 
+# require small intervals and the ranges vary quite a bit as is. 
+# I will apply min/max normalization to all variables
+
+# first create a normalize function
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+
+# Apply the function to all records in the all columns excluding the id variable. Won't need 
+# the id anymore
+listings_normalized <- as.data.frame(lapply(listings_normalized[c(2:18)], normalize))
+
+head(listings_normalized)
+# looks good
+
+# original range of numeric data
+summary(listings_narrow_clean_no_outliers)
+# normalized range
+summary(listings_normalized)
+# good all are between 0 and 1 now
+
+
+# the data is ready for modeling
+```
+
+
+
+$$\textbf{Phase 4: Modeling}$$
+
+In this stage I will create the training, validation, and testing subsets, construct the three machine learning prediction models that will be used (kNN, multiple linear regression, and neural network), and tune the models to end up with an optimal model for each. I chose to build kNN, regression, and neural network models for my analysis because my goal is to come up with a numeric prediction of the price of Airbnb listings based on their features. These models are all able to handle numeric predictions well, while some of the other models learned in class are better for handling categorical classification problems.   
+
+```{r}
+# CREATE TRAINING/TESTING SUBSETS
+
+# I will create a training subset, a validation subset, and a testing subset
+# because I will be using the holdout method to evaluate the models.
+# The training dataset will train the model and I will use the validation
+# dataset to tune the model to find the optimal parameters in minimzing error.
+# I will hold out the testing dataset to be used at the very end for final 
+# numeric predictions on the optimal tuned models.
+# This is ideal because the data from the testing subset will be completely 
+# independent, having yet to be seen by the models.
+
+# I will randomly split the data into training/validation/testing with 
+# a 50/25%/25% split
+# I am randomly splitting the records because I do not know if they are arranged
+# in any sort of order in the original dataset. So taking a random sample ensures
+# this.
+
+# calculate sizes of each set based on the percentage split
+listings_size <- nrow(listings_normalized)
+
+listings_train_size <- round(listings_size * .50)
+listings_validation_size <- round(listings_size * .25)
+listings_test_size <- listings_size-listings_train_size-listings_validation_size
+
+# create random order of records for the random splits
+set.seed(250)
+random_order <- order(runif(listings_size))
+
+# split based on that random order
+listings_train <- listings_normalized[random_order[1:listings_train_size], ]
+listings_validate <- listings_normalized[random_order[(listings_train_size+1):
+                                     (listings_train_size+listings_validation_size)], ]
+listings_test <- 
+  listings_normalized[random_order[(listings_train_size+listings_validation_size+1):
+                                     listings_size], ]
+
+
+
+# BUILD MODELS
+
+# 1) kNN
+
+# I will start with the kNN model. I will attemot to build my own function for this.
+# Since I am building a numeric prediction model, I want to return the mean of the 
+# neighbors.
+
+# I will first create a distance function to calculate the euclidean distance
+# between two vectors, p and q
+
+dist <- function(p,q)
+{
+  d <- 0
+  for (i in 1:length(p)) {
+    d <- d + (p[i] - q[i])^2
+  }
+  dist <- sqrt(d)
+} 
+
+# testing the distance function on the first row of the full data and the second row 
+p <- listings_normalized[1,]
+q <- listings_normalized[2,]
+
+w <- dist(p,q)
+w
+# 1.841978
+
+# now do the manual calculation to see if the function is working properly
+sqrt(((p[1]-q[1])^2) + ((p[2]-q[2])^2) + ((p[3]-q[3])^2) + 
+  ((p[4]-q[4])^2) + ((p[5]-q[5])^2) + ((p[6]-q[6])^2) + 
+  ((p[7]-q[7])^2) + ((p[8]-q[8])^2) + ((p[9]-q[9])^2) + 
+    ((p[10]-q[10])^2) + ((p[11]-q[11])^2) + ((p[12]-q[12])^2) + 
+  ((p[13]-q[13])^2) + ((p[14]-q[14])^2) + ((p[15]-q[15])^2) + 
+  ((p[16]-q[16])^2) + ((p[17]-q[17])^2))
+# 1.841978, it matches what the dist function gave 
+
+
+# now I will create a function to calculate the distances for all rows in the training data
+
+all_dist <- function(training, unknown) 
+{
+  m <- nrow(training)
+  ds <- numeric(m)
+  q <- unknown
+  for (i in 1:m) {
+    p <- training[i,]
+    ds[i] <- dist(p,q)
+  }
+  all_dist <- ds
+}
+
+# check to see if the function works with the first case in the training set
+n <- all_dist(listings_train[,2:17],listings_validate[1,2:17])
+
+head(n)
+# it works
+
+# now identify the k nearest neighbors
+nearest_neighbors <- function(neighbors,k)
+{
+  ordered_neighbors <- order(neighbors)
+  nearest_neighbors <- ordered_neighbors[1:k]
+}
+
+# look at the 10 closest neighbors from the 'n' object I created previously
+f <- nearest_neighbors(n,10)
+f
+# it works, returning the index of the records
+
+# now I can combine these into a kNN function that predicts the price for 
+# a single record
+knn_average <- function(training, unknown, k)
+{
+  nb <- all_dist(training[,names(training) != "price"], unknown)
+  f <- nearest_neighbors(nb,k)
+  knn_average <- mean(training$price[f])
+}
+
+# now predicting the price for the first record in validation set... using k = 10
+nn1 <- knn_average(listings_train, listings_validate[1,2:17], 10)
+nn1
+# the prediction is 0.1609375 remember this is the normalized value
+# good, it works
+
+
+# since I will want to test every record in the validation dataset, I will create a 
+# final function that predicts each record separately and combines them into 
+# a vector of all predicted prices in the test set
+knn_average_all <- function(training, validation, k) 
+{
+  m <- nrow(validation)
+  knns <- numeric(m)
+  for (i in 1:m) {
+    unknown <- validation[i,]
+    knns[i] <- knn_average(training, unknown, k)
+  }
+  knn_average_all <- knns
+}
+
+# now ready to run the kNN model... run it with k = 10
+# kNN_predictions10 <- knn_average_all(listings_train, listings_validate[,2:17], 10)
+
+# I tried running the kNN function that I built and it takes far too long. It got stuck with
+# all of the calculations and did not finish. It is not a very efficient function, so 
+# I will use the knnreg function from caret package... which returns the mean of the neighbors
+library(caret)
+
+# try it with k = 10
+kNN_prediction <- knnregTrain(listings_train[,2:17], 
+                              listings_validate[,2:17], 
+                              y = listings_train[,1], k = 10)
+
+head(kNN_prediction)
+# good, it works very quickly
+# notice that the first record prediction is the same as the prediction that my function gave,
+# 0.1609375, so it is working properly as expected
+
+
+
+# TUNE kNN MODEL 
+
+# I want to find the optimal model, so I will tune it by testing different k values and 
+# comparing the errors of each iteration
+
+# I will loop the k values through this function and calculate the Root Mean Squared Error  
+# for each k to compare the error between k's
+
+# create an RMSE function
+RMSE <- function(actual, predicted) {
+sqrt(mean((actual - predicted)^2))
+}
+
+# test it on the results from the original model run
+RMSE(listings_validate[,1],kNN_prediction)
+# RMSE = 0.1158633
+
+
+# create a data frame for the results of the loop, which will show the RMSE for all of the 
+# k values tested... I will test k values from 3-18
+knn_errors <- data.frame(k = c(3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18),
+                           RMSE = c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
+
+# run the loop
+for (i in 3:18) {
+  predictions_i <- knnregTrain(listings_train[,2:17], listings_validate[,2:17],
+                               y = listings_train[,1], k = i)
+  knn_errors[(i-2),2] <-  RMSE(listings_validate[,1], predictions_i)
+}
+
+# look at results
+knn_errors
+# good, it worked
+
+# visualize the results
+ggplot(knn_errors, aes(x = k, y = RMSE)) +
+  geom_line() + 
+  geom_point() +
+  scale_x_continuous(breaks = c(3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18)) +
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+  labs(title = "kNN Error", x = "k", y = "RMSE (lower is better)")
+
+# A k value of 9 provides the optimal kNN model for my data
+# I will use k = 9 for when I make prediction on the test dataset
+
+
+
+# 2) MULTIPLE REGRESSION
+
+# In building the multiple linear regression model, I will start with all predictor 
+# variables as the base model. I will then tune the model to find the optimal
+# regression model through p-value backfitting... eliminating the predictor
+# variable with the highest p-value one at a time
+names(listings_train)
+# initial model... all variables
+regression1 <- lm(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + zipcode + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt + room_type_Private_room,
+                  data = listings_train)
+
+# look at results
+summary(regression1)
+# Note the multiple predictor variables that are not significant. I will tune the 
+# model below. Also note the Adjusted R-Squared value is 0.4964. This is not great,
+# as not that much variance in price is being explained by the model.
+
+
+# TUNE REGRESSION MODEL 
+
+# Unlike with the kNN model, I will not need the validation set to create or tune the 
+# regression model. I am looking at the p-values and eliminating the variables one by
+# one until all varables are significant
+
+# Looking at the summary of the initial model, the 'room_type_Private_room'
+# variable has the highest p-value of the non-significant predictors, so I
+# will remove it.
+
+regression2 <- lm(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + zipcode + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt, data = listings_train)
+
+summary(regression2)
+# the Adjusted R-Squared value improves very minimally to 0.4966
+
+# 'zipcode' now has the highest remaining p-value (which is surprising to me),
+# I thought location would be a significant predictive variable for price of an
+# Airbnb listing. It might be that zipcode is too big of an area, if I were able
+# to break location down to a smaller area, it might be more significant.
+
+# removing 'zipcode'
+regression3 <- lm(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt, data = listings_train)
+
+summary(regression3)
+
+# Adjusted R-Squared is 0.4969. Now remove 'security_deposit_yes'
+regression4 <- lm(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + accommodates + bathrooms + 
+                    cleaning_fee_yes + guests_included + minimum_nights + 
+                    maximum_nights + number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt, data = listings_train)
+
+summary(regression4)
+# Adjusted R-Squared does not improve, it's now 0.4966. 
+# Now remove the 'host_acceptance_rate' variable
+
+regression5 <- lm(price ~ host_since + host_local_yes + calculated_host_listings_count + 
+                    accommodates + bathrooms + cleaning_fee_yes + guests_included + 
+                    minimum_nights + maximum_nights + number_of_reviews + 
+                    review_scores_rating + room_type_Entire_home_apt, data = listings_train)
+
+summary(regression5)
+# getting closer to a final model... Adjusted R-squared is again lower at 0.4962
+# Now remove 'minimum_nights'
+
+regression6 <- lm(price ~ host_since + host_local_yes + calculated_host_listings_count + 
+                    accommodates + bathrooms + cleaning_fee_yes + guests_included + 
+                    maximum_nights + number_of_reviews + review_scores_rating +
+                    room_type_Entire_home_apt, data = listings_train)
+
+summary(regression6)
+# lastly, remove 'maximum_nights'
+
+regression7 <- lm(price ~ host_since + host_local_yes + calculated_host_listings_count + 
+                    accommodates + bathrooms + cleaning_fee_yes + guests_included + 
+                    number_of_reviews + review_scores_rating + room_type_Entire_home_apt,
+                  data = listings_train)
+
+summary(regression7)
+# All of the remaining predictor variables are now significant. This is the final tuned 
+# optimal multiple regression model that I will use for predictions.
+
+# The Adjusted R-squared of 0.4953 is not great. The model does not explain much of the
+# variance in price.
+
+# The variables that the regression shows to be significant in predicting the price are:
+# 'host_since', 'host_local_yes', 'calculated_host_listings_count', 'accommodates',
+# 'bathrooms', 'cleaning_fee_yes', 'guests_included', 'number_of_reviews', 
+# 'review_scores_rating', and 'room_type_Entire_home_apt'.
+
+# An increase in the 'host_local_yes', 'cleaning_fee_yes' and 'number_of_reviews' variables 
+# have a negative impact on the price of a listing while the remaining variables have a 
+# positive impact.
+
+# The final equation to predict the price of an unknown record is:
+regression7
+# 0.003104 + (0.043531 * host_since) - (0.018249 * host_local_yes) + 
+# (0.052602 * calculated_host_listings_count) + (0.216118 * accommodates) + 
+# (0.143621 * bathrooms) - (0.014591 * cleaning_fee_yes) + (0.061865 * guests_included) -
+# (0.056225 * number_of_reviews) + (0.064636 * review_scores_rating) + 
+# (0.127593 * room_type_Entire_home_apt)
+
+
+
+# 3) NEURAL NETWORK
+
+# I will build the neural network model using the neuralnet package
+library(neuralnet)
+
+# start by training the simplest multi-layer feedforward network
+# with a single hidden node
+
+set.seed(250)
+NeuralNet1 <- neuralnet(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + zipcode + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt + room_type_Private_room,
+                    data = listings_train)
+
+
+# visualize the network
+plot(NeuralNet1)
+# you can see the weights for each of the features
+
+# I want to see if increasing the complexity of the topology of the network by adding 
+# hidden nodes improves results... will do this during tuning
+
+
+# TUNE NEURAL NETWORK MODEL
+
+# I will tune this similarly to how I did with kNN
+# I will test a range of hidden node values by training the model and 
+# predicting price on the validation set for each hidden node value
+# this will all be done in a loop
+
+
+# create a data frame for the results of the loop, which will show the RMSE for all of the 
+# hidden node values tested... I will test hidden node values ranging from 1-4 
+# so as not to make it too complex
+neuralnet_errors <- 
+  data.frame(nodes = c(1,2,3,4),
+                           RMSE = c(0,0,0,0))
+
+# run the loop
+for (i in 1:4) {
+  set.seed(250)
+  # train the model
+  model_i <- neuralnet(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + zipcode + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt + room_type_Private_room,
+                    data = listings_train, hidden = i)
+  # make predictions on validation set
+  model_results_i <- compute(model_i, listings_validate[,2:17])
+  predicted_i <- model_results_i$net.result
+  # calculate error and put into dataframe
+  neuralnet_errors[i,2] <-  RMSE(listings_validate[,1], predicted_i)
+}
+
+
+# look at results
+neuralnet_errors
+# good, it worked
+
+# 3 hidden nodes resulted in the lowest RMSE
+# I will use hidden nodes = 3 for when I make prediction on the test dataset
+
+# train this model and save for predictions later
+set.seed(250)
+NeuralNet_3nodes <- neuralnet(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + zipcode + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt + room_type_Private_room,
+                    data = listings_train, hidden = 3)
+
+# look at the network
+plot(NeuralNet_3nodes)
+```
+
+
+$$\textbf{Phase 5: Evaluation}$$
+
+In this stage I will make predictions from each model and evaluate and interpret the results. I will evaluate the fit of the model through the hold out method and through 10-folds cross validation. I will compare the models to each other by looking at the errors from each model. Finally, I will combine the models, creating a stacked ensemble model. 
+
+
+```{r}
+# EVALUATE PREDICTIONS WITH HOLDOUT METHOD
+
+# To evaluate the models, I will now bring the test dataset into play. I will use 
+# the models that are built to predict the price of every record in the test set.
+# I will evaluate the fit of each model by looking at the Root Mean Squared Error
+# and will compare the models to each other with this metric.
+
+# kNN predictions
+
+# after tuning the model, it was determined that k = 9 is optimal
+
+kNN_prediction_9 <- knnregTrain(listings_train[,2:17], 
+                              listings_test[,2:17], 
+                              y = listings_train[,1], k = 9)
+
+# calculate RMSE
+kNN_error <- RMSE(listings_test[,1],kNN_prediction_9)
+
+kNN_error
+# 0.1199020332
+
+# Regression predictions
+
+# use predict function to predict price based on the model coefficients
+# the final regression model is 'regression7'
+Regression_prediction <- predict(regression7,listings_test[,2:17])
+
+# calculate RMSE
+Regression_error <- RMSE(listings_test[,1],Regression_prediction)
+
+Regression_error
+# 0.1186397692
+
+# Neural Network predictions
+
+# after tuning the model it was determined that 3 hidden nodes was optimal
+
+# make predictions on validation set
+model_results_3nodes <- compute(NeuralNet_3nodes, listings_test[,2:17])
+NNet_prediction <- model_results_3nodes$net.result
+# calculate RMSE 
+NNet_error <- RMSE(listings_test[,1], NNet_prediction)
+# 0.1146125581
+
+
+# EVALUATE WITH 10-FOLD CROSS VALIDATION
+
+# For this, I will split the original normalized dataset into 10 equal parts.
+# I will then use 1 of those parts as the test dataset and the remaining
+# as the training dataset to train and test the model. I will do this 10 
+# times, using a different part as the test set during each iteration. 
+# I will calculate the average error of the 10 tests for the final measurement 
+# of the error
+
+# splitting the data
+
+nrow(listings_normalized)/10
+# 345.2
+
+# split it into 10 testing sets
+test1 <- listings_normalized[1:345,]
+test2 <- listings_normalized[346:690,]
+test3 <- listings_normalized[691:1035,]
+test4 <- listings_normalized[1036:1380,]
+test5 <- listings_normalized[1381:1725,]
+test6 <- listings_normalized[1726:2070,]
+test7 <- listings_normalized[2071:2415,]
+test8 <- listings_normalized[2416:2760,]
+test9 <- listings_normalized[2761:3105,]
+test10 <- listings_normalized[3106:3452,]
+
+# now create the 10 separate training sets that will be used alongwith each test
+train1 <- rbind(test2,test3,test4,test5,test6,test7,test8,test9,test10)
+train2 <- rbind(test1,test3,test4,test5,test6,test7,test8,test9,test10)
+train3 <- rbind(test2,test1,test4,test5,test6,test7,test8,test9,test10)
+train4 <- rbind(test2,test3,test1,test5,test6,test7,test8,test9,test10)
+train5 <- rbind(test2,test3,test4,test1,test6,test7,test8,test9,test10)
+train6 <- rbind(test2,test3,test4,test5,test1,test7,test8,test9,test10)
+train7 <- rbind(test2,test3,test4,test5,test6,test1,test8,test9,test10)
+train8 <- rbind(test2,test3,test4,test5,test6,test7,test1,test9,test10)
+train9 <- rbind(test2,test3,test4,test5,test6,test7,test8,test1,test10)
+train10 <- rbind(test2,test3,test4,test5,test6,test7,test8,test9,test1)
+
+# now I can run the models through each iteration
+
+# kNN
+
+# first create a function that will give me the RMSE for each iteration
+kNNerrorfunction <- function(train, test)
+  {
+kNN_pred <- knnregTrain(train[,2:17], test[,2:17], y = train[,1], k = 9)
+kNN_err <- RMSE(test[,1],kNN_pred)
+return(kNN_err)
+}
+
+# now implement the function for each testing/training pair of data
+
+knn_fold1 <- print(kNNerrorfunction(train1,test1))
+# 0.09625141079
+knn_fold2 <- print(kNNerrorfunction(train2,test2))
+# 0.1132113242
+knn_fold3 <- print(kNNerrorfunction(train3,test3))
+# 0.112536795
+knn_fold4 <- print(kNNerrorfunction(train4,test4))
+# 0.1264927101
+knn_fold5 <- print(kNNerrorfunction(train5,test5))
+# 0.1264573907
+knn_fold6 <- print(kNNerrorfunction(train6,test6))
+# 0.1361948812
+knn_fold7 <- print(kNNerrorfunction(train7,test7))
+# 0.117769034
+knn_fold8 <- print(kNNerrorfunction(train8,test8))
+# 0.09144716212
+knn_fold9 <- print(kNNerrorfunction(train9,test9))
+# 0.1039703586
+knn_fold10 <- print(kNNerrorfunction(train10,test10))
+# 0.1010031224
+
+# now, take the average of each of these tests, which will represent the 
+# final error for this 10-fold cross validation
+kNN_10fold_RMSE <- mean(knn_fold1,knn_fold2,knn_fold3,knn_fold4,knn_fold5,
+     knn_fold6,knn_fold7,knn_fold8,knn_fold9,knn_fold10)
+# 0.09625141079
+
+# the 10-fold cross validation resulted in an RMSE of 0.09625141079 for kNN
+
+
+# Regression
+
+# create a function that will give me the RMSE for each iteration
+Regressionerrorfunction <- function(train, test)
+  {
+# train it
+reg_model <- lm(price ~ host_since + host_local_yes + calculated_host_listings_count + 
+                    accommodates + bathrooms + cleaning_fee_yes + guests_included + 
+                    number_of_reviews + review_scores_rating + room_type_Entire_home_apt,
+                  data = train)
+# test it
+Reg_pred <- predict(reg_model,test[,2:17])
+# calculate RMSE
+Reg_err <- RMSE(test[,1],Reg_pred)
+return(Reg_err)
+}
+
+# now implement the function for each testing/training pair of data
+
+reg_fold1 <- print(Regressionerrorfunction(train1,test1))
+# 0.09322127807
+reg_fold2 <- print(Regressionerrorfunction(train2,test2))
+# 0.1099757835
+reg_fold3 <- print(Regressionerrorfunction(train3,test3))
+# 0.1159040344
+reg_fold4 <- print(Regressionerrorfunction(train4,test4))
+# 0.1288240507
+reg_fold5 <- print(Regressionerrorfunction(train5,test5))
+# 0.1327292351
+reg_fold6 <- print(Regressionerrorfunction(train6,test6))
+# 0.1412024051
+reg_fold7 <- print(Regressionerrorfunction(train7,test7))
+# 0.1223766932
+reg_fold8 <- print(Regressionerrorfunction(train8,test8))
+# 0.0966187331
+reg_fold9 <- print(Regressionerrorfunction(train9,test9))
+# 0.1088151046
+reg_fold10 <- print(Regressionerrorfunction(train10,test10))
+# 0.09972471366
+
+# now, take the average of each of these tests, which will represent the 
+# final error for this 10-fold cross validation
+Regression_10fold_RMSE <- mean(reg_fold1,reg_fold2,reg_fold3,reg_fold4,reg_fold5,
+     reg_fold6,reg_fold7,reg_fold8,reg_fold9,reg_fold10)
+# 0.09322127807
+
+# the 10-fold cross validation resulted in an RMSE of 0.09322127807 for regression
+
+
+# Neural Network
+
+
+# create a function that will give me the RMSE for each iteration
+NNerrorfunction <- function(train, test)
+  {
+# train it
+set.seed(250)
+NN_model <- neuralnet(price ~ host_since + host_local_yes + host_acceptance_rate +
+                    calculated_host_listings_count + zipcode + accommodates +
+                    bathrooms + security_deposit_yes + cleaning_fee_yes + 
+                    guests_included + minimum_nights + maximum_nights + 
+                    number_of_reviews + review_scores_rating + 
+                    room_type_Entire_home_apt + room_type_Private_room,
+                    data = train, hidden = 3, stepmax = 1000000)
+# test it
+model_results_NN <- compute(NN_model, test[,2:17])
+NN_pred <- model_results_NN$net.result
+# calculate RMSE
+NN_err <- RMSE(test[,1],NN_pred)
+return(NN_err)
+}
+
+# now implement the function for each testing/training pair of data
+
+NN_fold1 <- print(NNerrorfunction(train1,test1))
+# 0.100403558
+NN_fold2 <- print(NNerrorfunction(train2,test2))
+# 0.1073544822
+NN_fold3 <- print(NNerrorfunction(train3,test3))
+# 0.1108611625
+NN_fold4 <- print(NNerrorfunction(train4,test4))
+# 0.1282918492
+NN_fold5 <- print(NNerrorfunction(train5,test5))
+# 0.1323421852
+NN_fold6 <- print(NNerrorfunction(train6,test6))
+# 0.145066336
+NN_fold7 <- print(NNerrorfunction(train7,test7))
+# 0.1323044322
+NN_fold8 <- print(NNerrorfunction(train8,test8))
+# 0.09713313402
+NN_fold9 <- print(NNerrorfunction(train9,test9))
+# 0.1109005653
+NN_fold10 <- print(NNerrorfunction(train10,test10))
+# 0.1104013556
+
+# now, take the average of each of these tests, which will represent the 
+# final error for this 10-fold cross validation
+NeuralNet_10fold_RMSE <- mean(NN_fold1,NN_fold2,NN_fold3,NN_fold4,NN_fold5,
+     NN_fold6,NN_fold7,NN_fold8,NN_fold9,NN_fold10)
+# 0.100403558
+
+# the 10-fold cross validation resulted in an RMSE of 0.09322127807 for Neural Net
+
+
+
+# MODEL COMPARISON
+
+# The three models have now been used to make price predictions on previously unseen 
+# data and have been evaluated with the holdout method and with 10-fold cross validation. 
+# I will compare the RMSE of the models for each method of evaluation. This is an appropriate
+# comparison metho because the problem at hand is a numeric prediction. Since I have a 
+# predicted price for each record for each model, I can compare the models to each other by
+# looking at the error from these predictions in relation to the actual prices. If it were
+# a classification problem, I would look at accuracy rates of classifications, based on the 
+# actual category. RMSE is a great way to look at error, so I am calculating the RMSE for
+# each model.
+
+# I will create a table showing the error from each evaluation method for each model.
+model_comparison <- data.frame(Model = c("kNN","kNN","Regression","Regression",
+                                            "NeuralNet","NeuralNet"), 
+                                  Method = c("Holdout","CrossValidation","Holdout",
+                                             "CrossValidation","Holdout",
+                                             "CrossValidation"), 
+                                  RMSE = c(kNN_error,kNN_10fold_RMSE,Regression_error,
+                                           Regression_10fold_RMSE,NNet_error,
+                                           NeuralNet_10fold_RMSE))
+
+model_comparison
+# This shows the error for each of the models
+
+# Visualizing the errors... creating a barchart visualizing the error
+ggplot(model_comparison, aes(x = Model, y = RMSE)) +
+  geom_bar(stat = "identity", position = "dodge", aes(fill = Method)) + 
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+  labs(title = "Model Error Comparison", x = "Model", y = "RMSE (lower is better)")
+
+# this chart helps you see that Cross Validation resulted in a lower RMSE all around,
+# The Regression moel proved as the best fit (lowest RMSE) with 10-fold Cross Vaidation
+# With the holdout method, the Neural Network model proved to be the best fit with
+# lowest error.
+
+
+# MODEL INTERPRETATION
+
+# Now that the models have been used to predict prices on the test datasets, I want to interpret
+# the results. I will interpret the predictions from the results of the holdout method runs.
+
+# interpreting kNN results
+
+head(kNN_prediction_9)
+# looking at the predctions form the kNN model, they are all normalized values.
+# To interpret these predictions, I first want to convert back to dollar amounts
+# by reversing the min/max normalization.
+
+# the min/max normalization function used was: x-min(x)/max(x)-min(x)
+# this was applied to the listings_narrow_clean_no_outliers dataset,
+# so I will reverse it with the following formula: (norm value * (max - min)) + min
+# using the parameters from the listings_narrow_clean_no_outliers$price field
+
+# first, create the normalize reversing function
+normalize_reverse <- function(norm_values, original_data) {
+  return((norm_values * (max(original_data) -
+                          min(original_data))) + 
+                          min(original_data))
+}
+
+# now reverse the normalization 
+kNN_prediction_9_dollars <- normalize_reverse(kNN_prediction_9,
+                                              listings_narrow_clean_no_outliers$price)
+
+# looking at the predictions in dollar amounts...
+head(kNN_prediction_9_dollars)
+# this looks like the right range
+
+# look at a summary of the predicted prices
+summary(kNN_prediction_9_dollars)
+# the predictions range in price from $38 per night to $396 per night , with a mean of $162
+
+# comparing this range to the actual prices...
+# reverse the normalization of the actual prices...
+test_set_price_dollars <- normalize_reverse(listings_test[,1],
+                                                listings_narrow_clean_no_outliers$price)
+
+head(test_set_price_dollars)
+# good
+
+# look at summary
+summary(test_set_price_dollars)
+# these actual nightly prices from the test set range from $10 to $650 with a mean of $165
+# the mean is quite close but the extreme values on either end of the distribution 
+# were not predicted as acurately, which is expected.
+
+# interpreting one record in the test set...
+# run loop to reverse normalization of every column...
+# need to first get the original dataframe with the same column references
+listings_narrow_clean_no_outliers_2 <- listings_narrow_clean_no_outliers %>%
+                                          select(-1,-10)
+
+# now loop the normalize_reverse function through each column
+test_set_1record <- head(listings_test,1)
+test_set_1record <- test_set_1record[-1,]
+# I will pick a random record...128
+for (i in 1:17) {
+test_set_1record[1,i] <-  normalize_reverse(listings_test[128,i],
+                              listings_narrow_clean_no_outliers_2[128,i])
+}
+
+test_set_1record
+# looking at the actual values of each variable of the 128th record in the test set, 
+# the Airbnb listing that has a host that has been active on the service for 1.18 years,  
+# is local (lives in MA), accepts 87% of the people interested in renting the place, 
+# has just the one listing on the service, with the listing located in zipcode 02130, 
+# which accommodates 2 people, has 1 bathroom, does require a security deposit,
+# does have a cleaning fee, includes 1 guest in the price, requires a minimum of 2 
+# nights stay, will allow a maximum of 1125 nights stay, has 2 reviews, has a rating of
+# 100, and is a private room listing... has an actual price of $99 
+
+kNN_prediction_9_dollars[128]
+# the predicted price from the kNN model is $106. This is not too far off. The prediction
+# did well.
+
+# I cannot give the 95% confidence interval for kNN predictions because  astandard error is 
+# not given
+
+
+# interpreting Regression results
+
+head(Regression_prediction)
+
+# reverse the normalization 
+Regression_prediction_dollars <- normalize_reverse(Regression_prediction,
+                                              listings_narrow_clean_no_outliers$price)
+
+# looking at the predictions in dollar amounts...
+head(Regression_prediction_dollars)
+# looks good
+
+# look at a summary of the predicted prices
+summary(Regression_prediction_dollars)
+# the predictions range in price from $42 per night to $345 per night , with a mean of $165
+
+# comparing this range to the actual prices...
+summary(test_set_price_dollars)
+# these actual nightly prices from the test set range from $10 to $650 with a mean of $165
+# the mean is exactly the same and the extremes are closert to the mean than the kNN model
+
+# interpreting the same record in the test set as was done with kNN...
+Regression_prediction_dollars[128]
+# the prediction from the regression model is $115, further off from the actual price than
+# the kNN prediction was.
+
+# looking at 95% confidence interval for this prediction
+# the 95% confidence interval can be calculated for the regression results, by looking at the 
+# standard error from the results summary
+summary(regression7)
+# the standard error from the model is 0.1095314
+
+# so the 95% confidence interval is the prediction +/- 1.96 * standard error
+
+# I will need to do this calculation on the normalized prediction, then reverse the 
+# normalization for the confidence interval values
+
+# calculating the confidence interval
+Regression_prediction[128] - (1.96*0.1095314)
+# this resutls in a negative number, which means the lower value in the interval is $0
+Regression_prediction[128] + (1.96*0.1095314)
+# 0.3789941226
+
+# reversing the normalization on the upper value in the interval
+normalize_reverse(0.3789941226,listings_narrow_clean_no_outliers$price)
+# 252.5562385
+
+# the 95% confidence interval for the 128th record prediction in the regression model
+# is between $0 and $253. This is quite a wwide range and is not very helpful.
+
+
+# interpreting Neural Net results
+
+head(NNet_prediction)
+
+# reverse the normalization 
+NNet_prediction_dollars <- normalize_reverse(NNet_prediction,
+                                              listings_narrow_clean_no_outliers$price)
+
+# looking at the predictions in dollar amounts...
+head(NNet_prediction_dollars)
+# looks good
+
+# look at a summary of the predicted prices
+summary(NNet_prediction_dollars)
+# the predictions range in price from $5 per night to $394 per night , with a mean of $165
+
+# comparing this range to the actual prices...
+summary(test_set_price_dollars)
+# Again, as with the regression model, the mean is exactly the same as the actual values.
+# The extremes are more extreme in this model though, with the minimum being quite low.
+
+# interpreting the same record in the test set as was done with kNN and Regression...
+NNet_prediction_dollars[128]
+# the prediction from the Neural Net model is $125, which is higher and further off from the 
+# actual price than both the kNN and regression predictions were.
+
+# the Confidence Interval cannot be calculated from the neural net results either. 
+
+
+
+# CONSTRUCTING AN ENSEMBLE MODEL
+
+# As can be seen fromt he model evaluation and interpretation, each model results in a 
+# different level of variance. I will use all three models to create a stacked ensemble model,
+# which will communicate a prediction for each record in the test dataset from the holdout 
+# evaluation method that combines all three model predictions. In this stacked ensemble model, 
+# I will pass the full training data on to each model, predict the price for each record in the 
+# test dataset for eahc of the three models, then calculate the average of the three model 
+# prediction for each record in the test set. This will allow for a final combined prediction 
+# with reduced model variance.
+
+# The training set has already trained each of the three models and the predictions have been 
+# made on the test set for each model. I will now construct a vector of predictions representing
+# the average prediction from the models.
+
+# manually calculate the average prediction for each record
+ensemble_model_predictions <- (c(kNN_prediction_9) + c(Regression_prediction) + 
+                                 c(NNet_prediction))/3
+
+# confirm the accuracy of the calculation
+head(kNN_prediction_9)
+head(Regression_prediction)
+head(NNet_prediction)
+# first record
+(0.2229166667 + 0.2383276501 + 0.2488170279)/3
+# 0.2366871149
+head(ensemble_model_predictions)
+# 0.2366871149, this is correct
+
+# Good, now I have the ensemble normalized prediciton values for each record.
+# Now I want to reverse the normalization
+ensemble_model_predictions_dollars <- normalize_reverse(ensemble_model_predictions,
+                                              listings_narrow_clean_no_outliers$price)
+
+head(ensemble_model_predictions_dollars)
+
+# look at summary
+summary(ensemble_model_predictions_dollars)
+# the ensemble model results in a range of predicted nightly price from
+# $50 to $338, with a mean of $163.
+
+# Now I want to compare the RMSE of the individual models to the ensemble model
+# comparing on a dollar value basis
+ensemble_error_dollars <- RMSE(test_set_price_dollars,ensemble_model_predictions_dollars)
+
+kNN_error_dollars <- RMSE(test_set_price_dollars,kNN_prediction_9_dollars)
+Regression_error_dollars <- RMSE(test_set_price_dollars,Regression_prediction_dollars)
+NNet_error_dollars <- RMSE(test_set_price_dollars,NNet_prediction_dollars)
+
+# now visualize the comparison, with the enemble model included
+model_RMSE_dollars <- data.frame(Model = c("kNN","Regression","Neural Network",
+                                           "Ensemble"), 
+                                 RMSE = c(kNN_error_dollars,Regression_error_dollars,
+                                          NNet_error_dollars,ensemble_error_dollars))
+
+
+RMSEplot <- ggplot(model_RMSE_dollars, aes(x = Model, y = RMSE)) +
+  geom_bar(stat = "identity", fill = "red") + 
+  geom_text(aes(label = round(RMSE,0), vjust = -1)) +
+  scale_y_continuous(limits = c(0,100)) +
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+  labs(title = "Model Error Comparison", x = "", y = "RMSE (lower is better)")
+
+RMSEplot
+
+# As expected, the Ensemble model performs no worse than either of the individual models.
+# It does not perform better than the Neural Network model by itself though. The higher
+# errors from the kNN and Regression models influenced the Ensemble model error.
+
+```
+
+
+$$\textbf{Phase 5: Deployment}$$
+
+In the final stage of the CRISP-DM process, I review the work that was done and put together a final report. My final report will include each record a dataframe showing each record in the test set, with all of the original cleaned feature values (after reverse normalization) along with the actual price and predicted price from each of the models 
+
+```{r}
+# create a dataframe bringing the test set normalized records in 
+final_report <- listings_test
+
+# now use the row id numbers to pull all the original values from the 
+# un-normalized data
+
+# create an index of the row numbers
+indexrows <- rownames(final_report)
+
+# pull the origina data
+final_report <- listings_narrow_clean_no_outliers_2[indexrows,]
+
+# add the rounded price predictions to the data frame and their associated errors
+
+final_report <- final_report %>%
+  mutate(kNN_prediction = kNN_prediction_9_dollars, 
+         kNN_error = kNN_prediction-price,
+         Regression_prediction = Regression_prediction_dollars,
+         Regression_error = Regression_prediction-price,
+         NeuralNet_prediction = NNet_prediction_dollars,
+         NeuralNet_error = NeuralNet_prediction-price,
+         Ensemble_prediction = ensemble_model_predictions_dollars,
+         Ensemble_error = Ensemble_prediction-price)
+
+head(final_report)
+# good, now I want to identiy the model that was closest for each record,
+# the model with the lowest error for each record
+
+# I will use a for loop to classify the lowest error for each record
+nrow(final_report)
+min_error <- numeric(863)
+classified_min_error <- numeric(863)
+
+for (i in 1:863) {
+    min_error[i] <- min(abs(final_report[i,c("kNN_error")]),
+                        abs(final_report[i,c("Regression_error")]),
+                        abs(final_report[i,c("NeuralNet_error")]),
+                        abs(final_report[i,c("Ensemble_error")]))
+    
+    classified_min_error[i] <- ifelse(min_error[i]==abs(final_report[i,c("kNN_error")]),
+                                      "kNN",
+                              ifelse(min_error[i]==abs(final_report[i,c("Regression_error")]),
+                                      "Regression",
+                              ifelse(min_error[i]==abs(final_report[i,c("NeuralNet_error")]),
+                                      "Neural Network",
+                               ifelse(min_error[i]==abs(final_report[i,c("Ensemble_error")]),
+                                      "Ensemble", NA))))
+  }
+
+# check to make sure the loop worked
+head(classified_min_error)
+# yes, it worked
+
+# Now I can add this vector to the final report as well
+final_report <- cbind(final_report,classified_min_error)
+
+# check the final_report data frame
+head(final_report)
+# great, it worked
+
+# Now create a few charts and tables to visualize the results
+
+# look at the counts of best predictions for each model
+best_model_table <- final_report %>%
+  group_by(classified_min_error) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) 
+
+best_model_table
+
+best_model_plot <- 
+  ggplot(best_model_table, aes(x = classified_min_error, y = count)) +
+  geom_bar(stat = "identity", fill = "red") + 
+  geom_text(aes(label = count, vjust = -1)) +
+  scale_y_continuous(limits = c(0,500)) +
+  theme(axis.line.x = element_line(colour = "black"),
+        axis.line.y = element_line(colour = "black"),
+        axis.ticks.x = element_blank(),
+        plot.title = element_text(size=18),
+        panel.background = element_blank()) +
+  labs(title = "Model Comparison - Closest Predictions",
+       x = "", y = "Count of Closest Predictions")
+
+best_model_plot
+# this is very interesting... kNN had by far the largest number of records in
+# the test dataset where it was the closest prediction to the actual price, in 
+# comparison to the other models, but it performed the worst in terms of 
+# overall RMSE. The Ensemble and Neural Network models had the lowest number
+# of closest predictions but they performed the best in terms of overall
+# RMSE
+
+# This is very interesting
+
+
+# My final products for model deployment include the final_report dataframe,
+# which includes the full original values for the test dataset along with the 
+# predictions and errors for each of the models and a field showing which model
+# was closest 
+head(final_report)
+
+# the plot of the model comparisons via RMSE
+RMSEplot
+
+# and the plot of the closest prediction counts
+best_model_plot
+```
+
+
+
