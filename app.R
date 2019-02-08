@@ -1,0 +1,85 @@
+#
+# This is a Shiny web application. You can run the application by clicking
+# the 'Run App' button above. A new window should appear with the app. 
+# For a better viewing exprience, click 'Open in Browser' in the new window.
+# This will open the app in a browser window.
+#
+# Find out more about building applications with Shiny here:
+#
+#    http://shiny.rstudio.com/
+#
+#
+#  This can be run if you have R/Rstudio on your computer.
+#  If it does not run properly, check that the necessary R packages are installed.
+#  These are listed at the start of the script and loaded with "library()". 
+#  They need to be installed on your machine in order to be loaded.
+#  To install, run the following code:
+#
+#  install.packages("shiny")
+#  install.packages("tidyverse")
+#  install.packages("DT")
+#
+#  You may also want to ensure that the data file that is being loaded at the start
+#  of the script is located where the code indicates.
+#
+
+
+
+# load packages
+library(shiny)
+library(tidyverse)  
+library(DT)
+
+All_Towns_OBM <- read_csv("//coc/cdd/E&T/_PTDM/bgridley/OriginByMode_analysis/All_Towns_OBM.csv")
+
+ui <- fluidPage(
+  # App title ----
+  titlePanel("Origin By Mode Data"),
+  
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+    
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+      
+      # Input: checkbox of columns to display ----
+      checkboxGroupInput("show_vars", "Columns to show:",
+                         names(All_Towns_OBM), selected = names(All_Towns_OBM)),
+      
+      # Include clarifying text ----
+      helpText("Note: Filter the data table based on minimum number of total daily trips and year below."),
+      
+      # Input: sliderbar for total trips filter----
+      sliderInput("integer", "Total Trips Filter:",
+                  min = 1, max = 300,
+                  value = 1),
+      
+      # Input: Radio button for year to display ----
+      radioButtons("radio", "Display Year:",
+                   choices = list("2012", "2013",
+                                  "2014", "2015",
+                                  "2016", "2017"),selected = c("2017"))
+      
+    ),
+    
+    # Main panel for displaying outputs ----
+    mainPanel(
+      
+      DT::dataTableOutput("mytable1")
+    )
+  )
+)
+
+
+
+server <- function(input, output) {
+  
+  # filter data to be shown
+  All_Towns_OBM2 = All_Towns_OBM[sample(nrow(All_Towns_OBM), 1658), ]
+  output$mytable1 <- DT::renderDataTable({
+    DT::datatable(All_Towns_OBM2[All_Towns_OBM2$`Total Trips` >= input$integer & All_Towns_OBM2$`Reporting Year` == input$radio, input$show_vars, drop = FALSE])
+  })
+  
+}
+
+shinyApp(ui, server)
