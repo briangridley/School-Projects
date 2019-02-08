@@ -30,7 +30,7 @@ library(shiny)
 library(tidyverse)  
 library(DT)
 
-All_Towns_OBM <- read_csv("//coc/cdd/E&T/_PTDM/bgridley/OriginByMode_analysis/All_Towns_OBM.csv")
+All_Towns_OBM <- read_csv("...")
 
 ui <- fluidPage(
   # App title ----
