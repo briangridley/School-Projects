@@ -28,7 +28,7 @@ library(shiny)
 library(tidyverse)
 
 # load data
-shinydata <- read_csv("//coc/cdd/E&T/_PTDM/bgridley/OriginByMode_analysis/shinydata.csv")
+shinydata <- read_csv("...")
 
 
 # UI
