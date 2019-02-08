@@ -1,0 +1,113 @@
+#
+# This is a Shiny web application. You can run the application by clicking
+# the 'Run App' button above. A new window should appear with the app. 
+# For a better viewing exprience, click 'Open in Browser' in the new window.
+# This will open the app in a browser window.
+#
+# Find out more about building applications with Shiny here:
+#
+#    http://shiny.rstudio.com/
+#
+#
+#  This can be run if you have R/Rstudio on your computer.
+#  If it does not run properly, check that the necessary R packages are installed.
+#  These are listed at the start of the script and loaded with "library()". 
+#  They need to be installed on your machine in order to be loaded.
+#  To install, run the following code:
+#
+#  install.packages("shiny")
+#  install.packages("tidyverse")
+#
+#  You may also want to ensure that the data file that is being loaded at the start
+#  of the script is located where the code indicates.
+#
+
+
+# load packages
+library(shiny)
+library(tidyverse)
+
+# load data
+shinydata <- read_csv("//coc/cdd/E&T/_PTDM/bgridley/OriginByMode_analysis/shinydata.csv")
+
+
+# UI
+
+ui <- fluidPage(
+  
+  # App title ----
+  titlePanel("Mode Split by Town Origin"),
+  
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+    
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+      
+      # clarifying text
+      helpText("Showing just the top 6 towns for 2017 total trips"),
+      
+      # Input: Selector for variable to plot against mpg ----
+      radioButtons("var", 
+                  label = "Choose a mode to display",
+                  choices = c("Walk", "Bike",
+                  "Transit", "Drive Alone",
+                  "Carpool/Vanpool",
+                  "Total Trips"),
+                  selected = "Bike")
+    
+    ),
+    
+    # Main panel for displaying outputs ----
+    mainPanel(
+      
+      # Output: Plot of the requested variable against ----
+      plotOutput("modePlot")
+      
+    )
+  )
+)
+
+
+# Define server logic to plot various variables ----
+server <- function(input, output) {
+  
+  # Generate a plot of the requested variable  ----
+
+  output$modePlot <-  renderPlot({
+    
+    data <- switch(input$var, 
+                   "Walk" = shinydata$WalkPerc,
+                   "Bike" = shinydata$BikePerc,
+                   "Transit" = shinydata$TransitPerc,
+                   "Drive Alone" = shinydata$DroveAlonePerc,
+                   "Carpool/Vanpool" = shinydata$CarpoolVanpoolPerc ,
+                   "Total Trips" = shinydata$TotalTrips )
+   
+    legend <- switch(input$var, 
+                     "Walk" = "Walk %",
+                     "Bike" = "Bike %",
+                     "Transit" = "Public Transit %",
+                     "Drive Alone" = "Drive Alone %",
+                     "Carpool/Vanpool" = "Carpool/Vanpool %",
+                     "Total Trips" = "Total # of Daily Trips")
+    
+
+    ggplot(shinydata, aes(x=ReportingYear, color = `Town Origin`)) + 
+          geom_line(aes(y=data), size = 1.3) +
+          scale_y_continuous(labels = scales::comma) +
+          theme(panel.background = element_blank(),
+                panel.grid.major = element_line("grey"),
+                text = element_text(size = 12),
+                axis.line =  element_line(size = 1),
+                axis.ticks = element_blank(),
+                panel.border = element_blank(),
+                legend.key = element_blank())  + 
+          labs(y = legend, x = "Year")
+  })
+  
+}
+  
+
+# Create Shiny app ----
+shinyApp(ui, server)
