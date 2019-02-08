@@ -32,7 +32,7 @@ library(sf)
 
 
 # load data for app
-ParkingCounts <-  read_csv("//coc/cdd/E&T/_PTDM/bgridley/ParkingStudy/garagecounts_2017_reformat.csv")
+ParkingCounts <-  read_csv("...")
 
 # make the hours field numeric
 ParkingCounts$hour <- as.numeric(ParkingCounts$hour)
